@@ -8,9 +8,8 @@ import sys
 
 folder_name="march_madness"
 BASE_DIR=os.path.abspath(".").split(folder_name)[0]+folder_name
-DATA_ROOT=os.path.join(BASE_DIR,"data")
 #todo setup shared utilities folder
-sys.path.insert(0, DATA_ROOT)
+sys.path.insert(0, BASE_DIR)
 
 # locations of each slot on the image
 # order is play-in games,
@@ -180,12 +179,12 @@ class extNode(Node):
         object.__setattr__(self, name, value)
 
 
-def build_bracket(output_path='output.png',
-                  teamsPath='data/Teams.csv',
+def build_bracket(teamsPath='data/Teams.csv',
                   seedsPath='data/TourneySeeds.csv',
                   slotsPath='data/TourneySlots.csv',
                   submissionPath='data/submit.csv',
-                  year=2017):
+                  emptyBracketPath='empty_bracket/empty.jpg',
+                  year=2022):
 
     assert os.path.isfile(
         teamsPath), '{} is not a valid file path for teamsPath.'.format(teamsPath)
@@ -274,7 +273,6 @@ def build_bracket(output_path='output.png',
     # Create bracket image
     # relevant:
     # https://stackoverflow.com/questions/26649716/how-to-show-pil-image-in-ipython-notebook
-    emptyBracketPath = 'empty_bracket/empty.jpg'
     img = Image.open(emptyBracketPath)
     draw = ImageDraw.Draw(img)
     # font = ImageFont.truetype(<font-file>, <font-size>)
@@ -295,15 +293,16 @@ def build_bracket(output_path='output.png',
 
     ax.imshow(np.asarray(img))
     # plt.show() # for in notebook
-    img.save(output_path)
+    img.save(f'{year}Bracket.png')
 
 # Sample call
 
+
 # b = build_bracket(
-#     output_path="2021_bracket.png",
 #     teamsPath="../../data/MTeams.csv",
 #     seedsPath="../../data/MNCAATourneySeeds.csv",
 #     slotsPath="../../data/MNCAATourneySlots.csv",
 #     submissionPath="ncaa-march-madness-submission.csv",
+#     emptyBracketPath = "../../empty_bracket/empty.jpg",
 #     year=2021
 # )
