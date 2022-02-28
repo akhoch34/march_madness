@@ -299,9 +299,9 @@ def build_bracket(teamsPath='data/Teams.csv',
 
 
 # b = build_bracket(
-#     teamsPath="../../data/MTeams.csv",
-#     seedsPath="../../data/MNCAATourneySeeds.csv",
-#     slotsPath="../../data/MNCAATourneySlots.csv",
+#     teamsPath="../../data/2021/MTeams.csv",
+#     seedsPath="../../data/2021/MNCAATourneySeeds.csv",
+#     slotsPath="../../data/2021/MNCAATourneySlots.csv",
 #     submissionPath="ncaa-march-madness-submission.csv",
 #     emptyBracketPath = "../../empty_bracket/empty.jpg",
 #     year=2021
