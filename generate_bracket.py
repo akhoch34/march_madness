@@ -321,7 +321,8 @@ def build_bracket(teamsPath='data/Teams.csv',
                   slotsPath='data/TourneySlots.csv',
                   submissionPath='data/submit.csv',
                   emptyBracketPath='empty_bracket/empty.jpg',
-                  year=2022):
+                  year=2022,
+                  spread=False):
 
     assert os.path.isfile(
         teamsPath), '{} is not a valid file path for teamsPath.'.format(teamsPath)
@@ -364,8 +365,9 @@ def build_bracket(teamsPath='data/Teams.csv',
                 node.right = extNode(counter + 1)
                 seed_slot_map[counter] = s[s['slot'] ==
                                            seed_slot_map[node.value]].values[0][2]
-                seed_slot_map[counter + 1] = s[s['slot'] ==
-                                               seed_slot_map[node.value]].values[0][3]
+                placeholder = s[s['slot'] ==
+                                seed_slot_map[node.value]].values[0][3]
+                seed_slot_map[counter + 1] = placeholder
                 next_nodes.append(node.left)
                 next_nodes.append(node.right)
                 counter += 2
@@ -378,33 +380,73 @@ def build_bracket(teamsPath='data/Teams.csv',
     def get_team_id(seedMap):
         return (seedMap, df[df['seed'] == seed_slot_map[seedMap]]['teamid'].values[0])
 
+    def get_team_ids_and_gid(slot1, slot2):
+        team1 = get_team_id(slot1)
+        team2 = get_team_id(slot2)
+        if team2[1] < team1[1]:
+            temp = team1
+            team1 = team2
+            team2 = temp
+        gid = '{season}_{t1}_{t2}'.format(
+            season=year, t1=team1[1], t2=team2[1])
+        return team1, team2, gid
     # Solve bracket using predictions
+    pred_map = {}
     for level in list(reversed(bkt.levels)):
         for ix, node in enumerate(level[0: len(level) // 2]):
-            team1 = get_team_id(level[ix * 2].value)
-            team2 = get_team_id(level[ix * 2 + 1].value)
-            if team2[1] < team1[1]:
-                temp = team1
-                team1 = team2
-                team2 = temp
-            gid = '{season}_{t1}_{t2}'.format(
-                season=year, t1=team1[1], t2=team2[1])
-            if submit[submit[ID] == gid][PRED].values[0] >= 0.5:
-                level[ix * 2].parent.value = team1[0]
+            team1, team2, gid = get_team_ids_and_gid(
+                level[ix * 2].value, level[ix * 2 + 1].value)
+            pred = submit[submit[ID] == gid][PRED].values[0]
+            if gid in list(submit.id):
+                game_outcome = 1 if submit[submit[ID] == gid][PRED].values[0] > 0.5 else 0
+                team = team1 if game_outcome == 1 else team2
+                if (game_outcome == 1 and pred > 0.5):
+                    # outcome agress with prediction, team1 wins
+                    if(spread):
+                        pred_label = -100*pred/(100-pred*100)
+                    else:
+                        pred_label = pred
+                elif (game_outcome == 0 and pred > 0.5):
+                    # outcome different than prediction, team2 wins
+                    # pred_label = 1 - pred
+                    pred_label = -100*pred/(100-pred*100)
+                elif (game_outcome == 0 and pred <= 0.5):
+                    # outcome agrees with prediction, team2 wins
+                    # pred_label = 1 - pred
+                    pred_label = -100*(1-pred)/(100-(1-pred)*100)
+                elif (game_outcome == 1 and pred <= 0.5):
+                    # outcome different than prediction, team2 wins
+                    # pred_label = pred
+                    pred_label = -100*(1-pred)/(100-(1-pred)*100)
+                else:
+                    raise ValueError(game_outcome)
+
+            elif pred >= 0.5:
+                team = team1
+                pred_label = pred
             else:
-                level[ix * 2].parent.value = team2[0]
+                team = team2
+                pred_label = 1 - pred
+
+            level[ix * 2].parent.value = team[0]
+            pred_map[gid] = (team[0], seed_slot_map[team[0]], pred_label)
 
     # Create data for writing to image
     slotdata = []
     for ix, key in enumerate([b for a in bkt.levels for b in a]):
-        xy = slot_coordinates[year][num_slots - ix]
-        try:
-            st = '{seed} {team}'.format(
-                seed=seed_slot_map[key.value],
-                team=df[df['seed'] == seed_slot_map[key.value]][TEAM].values[0]
-            )
-        except IndexError as e:
-            st = str(seed_slot_map[key.value])
+        xy = slot_coordinates[2021][max(slot_coordinates[2021].keys()) - ix]
+        pred = ''
+        gid = ''
+        if key.parent is not None:
+            team1, team2, gid = get_team_ids_and_gid(
+                key.parent.left.value, key.parent.right.value)
+        if gid != '' and pred_map[gid][1] == seed_slot_map[key.value]:
+            pred = "{:.2f}".format(pred_map[gid][2] * 100)
+        st = '{seed} {team} {pred}'.format(
+            seed=seed_slot_map[key.value],
+            team=df[df['seed'] == seed_slot_map[key.value]][TEAM].values[0],
+            pred=pred
+        )
         slotdata.append((xy, st))
 
     # Create bracket image
@@ -443,3 +485,14 @@ def build_bracket(teamsPath='data/Teams.csv',
 #     emptyBracketPath = "../../empty_bracket/empty.jpg",
 #     year=2021
 # )
+
+DATA_DIR = './data/2021'
+build_bracket(
+    teamsPath=f"{DATA_DIR}/MTeams.csv",
+    seedsPath=f"{DATA_DIR}/MNCAATourneySeeds.csv",
+    slotsPath=f"{DATA_DIR}/MNCAATourneySlots.csv",
+    submissionPath="./notebooks/2021_top_performer/submission.csv",
+    emptyBracketPath="./empty_bracket/empty.jpg",
+    year=int(2021),
+    spread=True
+)
