@@ -447,7 +447,7 @@ def build_bracket(teamsPath='data/Teams.csv',
             team1, team2, gid = get_team_ids_and_gid(
                 key.parent.left.value, key.parent.right.value)
         if gid != '' and pred_map[gid][1] == seed_slot_map[key.value]:
-            pred = "{:.2f}".format(pred_map[gid][2] * 100)
+            pred = "{:.2f}".format(pred_map[gid][2] * 100) if spread else "{:.2f}%".format(pred_map[gid][2] * 100)
         st = '{seed} {team} {pred}'.format(
             seed=seed_slot_map[key.value],
             team=df[df['seed'] == seed_slot_map[key.value]][TEAM].values[0],
