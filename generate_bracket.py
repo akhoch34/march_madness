@@ -408,16 +408,22 @@ def build_bracket(teamsPath='data/Teams.csv',
                         pred_label = pred
                 elif (game_outcome == 0 and pred > 0.5):
                     # outcome different than prediction, team2 wins
-                    # pred_label = 1 - pred
-                    pred_label = -100*pred/(100-pred*100)
+                    if(spread):
+                        pred_label = -100*pred/(100-pred*100)
+                    else:
+                        pred_label = 1 - pred
                 elif (game_outcome == 0 and pred <= 0.5):
                     # outcome agrees with prediction, team2 wins
-                    # pred_label = 1 - pred
-                    pred_label = -100*(1-pred)/(100-(1-pred)*100)
+                    if(spread):
+                        pred_label = -100*(1-pred)/(100-(1-pred)*100)
+                    else:
+                        pred_label = 1 - pred
                 elif (game_outcome == 1 and pred <= 0.5):
                     # outcome different than prediction, team2 wins
-                    # pred_label = pred
-                    pred_label = -100*(1-pred)/(100-(1-pred)*100)
+                    if(spread):
+                        pred_label = -100*(1-pred)/(100-(1-pred)*100)
+                    else:
+                        pred_label = pred
                 else:
                     raise ValueError(game_outcome)
 
