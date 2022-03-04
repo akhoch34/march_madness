@@ -476,23 +476,13 @@ def build_bracket(teamsPath='data/Teams.csv',
 
 # Sample call
 
-
-# b = build_bracket(
-#     teamsPath="../../data/2021/MTeams.csv",
-#     seedsPath="../../data/2021/MNCAATourneySeeds.csv",
-#     slotsPath="../../data/2021/MNCAATourneySlots.csv",
-#     submissionPath="ncaa-march-madness-submission.csv",
-#     emptyBracketPath = "../../empty_bracket/empty.jpg",
-#     year=2021
+# DATA_DIR = './data/2021'
+# build_bracket(
+#     teamsPath=f"{DATA_DIR}/MTeams.csv",
+#     seedsPath=f"{DATA_DIR}/MNCAATourneySeeds.csv",
+#     slotsPath=f"{DATA_DIR}/MNCAATourneySlots.csv",
+#     submissionPath="./notebooks/2021_top_performer/submission.csv",
+#     emptyBracketPath="./empty_bracket/empty.jpg",
+#     year=int(2021),
+#     spread=True
 # )
-
-DATA_DIR = './data/2021'
-build_bracket(
-    teamsPath=f"{DATA_DIR}/MTeams.csv",
-    seedsPath=f"{DATA_DIR}/MNCAATourneySeeds.csv",
-    slotsPath=f"{DATA_DIR}/MNCAATourneySlots.csv",
-    submissionPath="./notebooks/2021_top_performer/submission.csv",
-    emptyBracketPath="./empty_bracket/empty.jpg",
-    year=int(2021),
-    spread=True
-)
