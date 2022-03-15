@@ -479,7 +479,7 @@ def build_bracket(teamsPath='data/Teams.csv',
     ax.imshow(np.asarray(img))
     # plt.show() # for in notebook
     img_path = f'{year}Bracket_Spread.png' if spread else f'{year}Bracket_Prob.png'
-    img.save()
+    img.save(img_path)
 
 # Sample call
 
