@@ -4,10 +4,10 @@ library(lme4)
 
 DATA_DIR <- "C:/Users/conor/Documents/march_madness/data/2023/MDataFiles"
 
-regresults <- read.csv(DATA_DIR +"/MRegularSeasonDetailedResults.csv")
-results <- read.csv(DATA_DIR +"/MNCAATourneyDetailedResults.csv")
-sub <- read.csv(DATA_DIR +"/MSampleSubmissionStage1.csv")
-seeds <- read.csv(DATA_DIR +"/MNCAATourneySeeds.csv")
+regresults <- read.csv(paste(DATA_DIR, "/MRegularSeasonDetailedResults.csv", sep=""))
+results <- read.csv(paste(DATA_DIR, "/MNCAATourneyDetailedResults.csv", sep=""))
+sub <- read.csv(paste(DATA_DIR, "/MSampleSubmissionStage1.csv", sep=""))
+seeds <- read.csv(paste(DATA_DIR, "/MNCAATourneySeeds.csv", sep=""))
 
 seeds$Seed = as.numeric(substring(seeds$Seed,2,4))
 
@@ -181,7 +181,7 @@ for (i in 1:10) {
 
 ### Run predictions
 
-sub$Season = 2018
+sub$Season = 2023
 sub$T1 = as.numeric(substring(sub$ID,6,9))
 sub$T2 = as.numeric(substring(sub$ID,11,14))
 
@@ -210,11 +210,7 @@ Z$Pred[Z$Pred >= 0.975] = 0.975
 ### Anomaly event happened only once before - be brave
 Z$Pred[Z$Seed1 == 16 & Z$Seed2 == 1] = 0
 Z$Pred[Z$Seed1 == 15 & Z$Seed2 == 2] = 0
-Z$Pred[Z$Seed1 == 14 & Z$Seed2 == 3] = 0
-Z$Pred[Z$Seed1 == 13 & Z$Seed2 == 4] = 0
 Z$Pred[Z$Seed1 == 1 & Z$Seed2 == 16] = 1
 Z$Pred[Z$Seed1 == 2 & Z$Seed2 == 15] = 1
-Z$Pred[Z$Seed1 == 3 & Z$Seed2 == 14] = 1
-Z$Pred[Z$Seed1 == 4 & Z$Seed2 == 13] = 1
 
-write.csv(select(Z, ID, Pred), "sub.csv", row.names = FALSE)
+write.csv(select(Z, ID, Pred), "C:/Users/conor/Documents/march_madness/sub.csv", row.names = FALSE)
