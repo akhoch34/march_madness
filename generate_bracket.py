@@ -459,7 +459,7 @@ def build_bracket(teamsPath='data/Teams.csv',
                   submissionPath='data/submit.csv',
                   emptyBracketPath='empty_bracket/empty.jpg',
                   year=2022,
-                  spread=False):
+                  bettingOdds=False):
 
     assert os.path.isfile(
         teamsPath), '{} is not a valid file path for teamsPath.'.format(teamsPath)
@@ -539,25 +539,25 @@ def build_bracket(teamsPath='data/Teams.csv',
                 team = team1 if game_outcome == 1 else team2
                 if (game_outcome == 1 and pred > 0.5):
                     # outcome agress with prediction, team1 wins
-                    if(spread):
+                    if(bettingOdds):
                         pred_label = -100*pred/(100-pred*100)
                     else:
                         pred_label = pred
                 elif (game_outcome == 0 and pred > 0.5):
                     # outcome different than prediction, team2 wins
-                    if(spread):
+                    if(bettingOdds):
                         pred_label = -100*pred/(100-pred*100)
                     else:
                         pred_label = 1 - pred
                 elif (game_outcome == 0 and pred <= 0.5):
                     # outcome agrees with prediction, team2 wins
-                    if(spread):
+                    if(bettingOdds):
                         pred_label = -100*(1-pred)/(100-(1-pred)*100)
                     else:
                         pred_label = 1 - pred
                 elif (game_outcome == 1 and pred <= 0.5):
                     # outcome different than prediction, team2 wins
-                    if(spread):
+                    if(bettingOdds):
                         pred_label = -100*(1-pred)/(100-(1-pred)*100)
                     else:
                         pred_label = pred
@@ -584,7 +584,7 @@ def build_bracket(teamsPath='data/Teams.csv',
             team1, team2, gid = get_team_ids_and_gid(
                 key.parent.left.value, key.parent.right.value)
         if gid != '' and pred_map[gid][1] == seed_slot_map[key.value]:
-            pred = "{:.2f}".format(pred_map[gid][2] * 100) if spread else "{:.2f}%".format(pred_map[gid][2] * 100)
+            pred = "{:.2f}".format(pred_map[gid][2] * 100) if bettingOdds else "{:.2f}%".format(pred_map[gid][2] * 100)
         st = '{seed} {team} {pred}'.format(
             seed=seed_slot_map[key.value],
             team=df[df['seed'] == seed_slot_map[key.value]][TEAM].values[0],
@@ -615,7 +615,7 @@ def build_bracket(teamsPath='data/Teams.csv',
 
     ax.imshow(np.asarray(img))
     # plt.show() # for in notebook
-    img_path = f'{year}Bracket_Spread.png' if spread else f'{year}Bracket_Prob.png'
+    img_path = f'{year}Bracket_bettingOdds.png' if bettingOdds else f'{year}Bracket_Prob.png'
     img.save(img_path)
 
 # Sample call
@@ -628,5 +628,5 @@ def build_bracket(teamsPath='data/Teams.csv',
 #     submissionPath="./notebooks/2023_top_performer/submission.csv",
 #     emptyBracketPath="./empty_bracket/empty.jpg",
 #     year=int(2023),
-#     spread=True
+#     bettingOdds=True
 # )
