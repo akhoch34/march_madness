@@ -714,7 +714,7 @@ def build_bracket(teamsPath='data/Teams.csv',
     # Create data for writing to image
     slotdata = []
     for ix, key in enumerate([b for a in bkt.levels for b in a]):
-        xy = slot_coordinates[2023][max(slot_coordinates[2023].keys()) - ix]
+        xy = slot_coordinates[year][max(slot_coordinates[year].keys()) - ix]
         pred = ''
         gid = ''
         if key.parent is not None:
