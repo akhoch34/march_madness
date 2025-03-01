@@ -1,0 +1,66 @@
+{
+  "all_results": [
+    {
+      "elo_weight": 0.0,
+      "include_elo": true,
+      "include_advanced_stats": true,
+      "brier_score": 0.25359129918588874
+    },
+    {
+      "elo_weight": 0.1,
+      "include_elo": true,
+      "include_advanced_stats": true,
+      "brier_score": 0.24470383438922114
+    },
+    {
+      "elo_weight": 0.2,
+      "include_elo": true,
+      "include_advanced_stats": true,
+      "brier_score": 0.23678433717898378
+    },
+    {
+      "elo_weight": 0.3,
+      "include_elo": true,
+      "include_advanced_stats": true,
+      "brier_score": 0.2298328075551768
+    },
+    {
+      "elo_weight": 0.4,
+      "include_elo": true,
+      "include_advanced_stats": true,
+      "brier_score": 0.22384924551780017
+    },
+    {
+      "elo_weight": 0.5,
+      "include_elo": true,
+      "include_advanced_stats": true,
+      "brier_score": 0.21883365106685385
+    },
+    {
+      "elo_weight": 0.6,
+      "include_elo": true,
+      "include_advanced_stats": true,
+      "brier_score": 0.21478602420233783
+    },
+    {
+      "elo_weight": 0.7,
+      "include_elo": true,
+      "include_advanced_stats": true,
+      "brier_score": 0.21170636492425216
+    },
+    {
+      "elo_weight": 0.8,
+      "include_elo": true,
+      "include_advanced_stats": true,
+      "brier_score": 0.2095946732325968
+    }
+  ],
+  "best_result": {
+    "elo_weight": 0.8,
+    "include_elo": true,
+    "include_advanced_stats": true,
+    "brier_score": 0.2095946732325968
+  },
+  "best_brier": 0.2095946732325968,
+  "timestamp": "2025-03-01 12:54:46"
+}

@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from binarytree import Node
 import os
 import sys
+import math
 
 folder_name="march_madness"
 BASE_DIR=os.path.abspath(".").split(folder_name)[0]+folder_name
@@ -516,6 +517,16 @@ def build_bracket(teamsPath='data/Teams.csv',
 
     def get_team_id(seedMap):
         return (seedMap, df[df['seed'] == seed_slot_map[seedMap]]['teamid'].values[0])
+    
+    def prob_to_spread(p):
+        """Convert win probability to point spread"""
+        if p == 0.5:
+            return 0
+        if p < 0.001:
+            p = 0.001
+        if p > 0.999:
+            p = 0.999
+        return round(-math.log(1/p - 1) * (10/math.log(10))*2)/20000
 
     def get_team_ids_and_gid(slot1, slot2):
         team1 = get_team_id(slot1)
@@ -540,25 +551,25 @@ def build_bracket(teamsPath='data/Teams.csv',
                 if (game_outcome == 1 and pred > 0.5):
                     # outcome agress with prediction, team1 wins
                     if(bettingOdds):
-                        pred_label = -100*pred/(100-pred*100)
+                        pred_label = prob_to_spread(pred)
                     else:
                         pred_label = pred
                 elif (game_outcome == 0 and pred > 0.5):
                     # outcome different than prediction, team2 wins
                     if(bettingOdds):
-                        pred_label = -100*pred/(100-pred*100)
+                        pred_label = prob_to_spread(pred)
                     else:
                         pred_label = 1 - pred
                 elif (game_outcome == 0 and pred <= 0.5):
                     # outcome agrees with prediction, team2 wins
                     if(bettingOdds):
-                        pred_label = -100*(1-pred)/(100-(1-pred)*100)
+                        pred_label = prob_to_spread(1-pred)
                     else:
                         pred_label = 1 - pred
                 elif (game_outcome == 1 and pred <= 0.5):
                     # outcome different than prediction, team2 wins
                     if(bettingOdds):
-                        pred_label = -100*(1-pred)/(100-(1-pred)*100)
+                        pred_label = prob_to_spread(1-pred)
                     else:
                         pred_label = pred
                 else:
