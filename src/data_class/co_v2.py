@@ -32,7 +32,14 @@ class MarchMadnessPredictor:
     def load_data(self):
         """Load all necessary data files"""
         # Teams data
-        self.data['teams'] = pd.read_csv(f"{self.data_dir}/{self.gender}Teams.csv")
+        all_teams = pd.read_csv(f"{self.data_dir}/{self.gender}Teams.csv")
+
+        # Women's teams don't have the first/last season cols for some reason
+        if self.gender == "M":
+            self.data['teams'] = all_teams[all_teams['LastD1Season'] >= self.current_season]
+        else:
+            mens_teams = pd.read_csv(f"{self.data_dir}/MTeams.csv")
+            self.data['teams'] = all_teams[all_teams['TeamName'].isin(mens_teams[mens_teams['LastD1Season'] >= self.current_season]['TeamName'])]
         
         # Regular season results
         self.data['regular_season'] = pd.read_csv(
@@ -2638,9 +2645,6 @@ class MarchMadnessPredictor:
         upset_factors = {
             'experience': self.get_team_experience_score(team2_id, season) - 
                          self.get_team_experience_score(team1_id, season),
-                         
-            'coach_experience': self.get_coach_experience(team2_id, season) - 
-                               self.get_coach_experience(team1_id, season),
                                
             'momentum': self.get_recent_momentum(team2_id, season) - 
                        self.get_recent_momentum(team1_id, season),
@@ -2651,7 +2655,9 @@ class MarchMadnessPredictor:
             'conference': self.calculate_conference_strength(season, self.get_team_conference(team2_id, season)) -
                          self.calculate_conference_strength(season, self.get_team_conference(team1_id, season))
         }
-        
+
+        if self.gender == "M":
+            upset_factors['coach_experience'] = self.get_coach_experience(team2_id, season) - self.get_coach_experience(team1_id, season)
         # Weights for each factor (these could be optimized through backtesting)
         upset_weights = {
             'experience': 0.2,
@@ -2829,10 +2835,11 @@ class MarchMadnessPredictor:
         team_exp = self.get_team_experience_score(team_id, season)
         
         # Coach experience
-        coach_exp = self.get_coach_experience(team_id, season)
+        if self.gender == "M":
+            coach_exp = self.get_coach_experience(team_id, season)
         
         # Combined experience score
-        total_exp = (team_exp * 0.6) + (coach_exp * 0.4)
+        total_exp = (team_exp * 0.6) + (coach_exp * 0.4) if self.gender == "M" else team_exp
         
         # Convert to a probability adjustment factor
         # Based on historical data, experience typically provides a modest advantage
