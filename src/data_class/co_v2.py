@@ -3138,7 +3138,8 @@ class MarchMadnessPredictor:
                                    (teams_df['LastD1Season'] >= season)]
         else:
             # For women's data or if D1 info not available, use all teams
-            active_teams = teams_df
+            mens_teams = pd.read_csv(f"{self.data_dir}/MTeams.csv")
+            active_teams = teams_df[teams_df['TeamName'].isin(mens_teams[mens_teams['LastD1Season'] >= self.current_season]['TeamName'])]
             
         # Filter to teams that played in this season
         season_games = self.data['regular_season'][self.data['regular_season']['Season'] == season]
@@ -3289,6 +3290,7 @@ class MarchMadnessPredictor:
             # If team2 is favored, calculate from their perspective then flip
             upset_adjustment = -self.predict_upset_probability(team2_id, team1_id, team2_seed, team1_seed, season)
         
+        fatigue_factor = self.calculate_fatigue_factor(team1_id, day_num, season)
         
         # 2c. Style matchup advantage
         style_adjustment = self.calculate_style_advantage(team1_id, team2_id, season)
@@ -3301,7 +3303,8 @@ class MarchMadnessPredictor:
         adjustments = {
             'upset': upset_adjustment,
             'style': style_adjustment,
-            'experience': experience_adjustment
+            'experience': experience_adjustment,
+            'fatigue': fatigue_factor,
         }
         
         # 4. Apply calibration and significance threshold
