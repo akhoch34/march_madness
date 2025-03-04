@@ -157,12 +157,14 @@ class MarchMadnessDataManager:
 
         return games
 
-    def get_tournament_teams(self, season):
+    def get_tournament_teams(self, season, get_all_matchups=False):
         """Get all teams participating in a specific tournament season"""
-        seeds = self.data["processed_seeds"][
+        if get_all_matchups:
+            return self.data['teams']
+        return self.data["processed_seeds"][
             self.data["processed_seeds"]["Season"] == season
         ]
-        return seeds
+
 
     def get_early_season_rankings(self, season):
         """Get early season rankings (as a proxy for preseason rankings)"""

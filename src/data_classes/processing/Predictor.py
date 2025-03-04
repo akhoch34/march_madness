@@ -6,6 +6,7 @@ from .MLModel import MarchMadnessMLModel
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import os
 
 
 class MarchMadnessPredictor:
@@ -91,7 +92,9 @@ class MarchMadnessPredictor:
             # Default to ELO if ML not available
             return elo_pred
 
-    def generate_predictions(self, submission_file=None, method="ensemble"):
+    def generate_predictions(
+        self, submission_file=None, method="ensemble", get_all_matchups=False
+    ):
         """
         Generate predictions for the current tournament
 
@@ -102,16 +105,20 @@ class MarchMadnessPredictor:
         Returns:
         DataFrame: Prediction results
         """
+        if get_all_matchups:
+            team_ids = self.data_manager.data["teams"]["TeamID"].unique()
         # Get current season seeds
-        current_seeds = self.data_manager.data["processed_seeds"][
-            self.data_manager.data["processed_seeds"]["Season"] == self.current_season
-        ]
+        else:
+            current_seeds = self.data_manager.data["processed_seeds"][
+                self.data_manager.data["processed_seeds"]["Season"]
+                == self.current_season
+            ]
 
-        if len(current_seeds) == 0:
-            raise ValueError(f"No seed data found for season {self.current_season}")
+            if len(current_seeds) == 0:
+                raise ValueError(f"No seed data found for season {self.current_season}")
 
-        # Generate all possible matchups
-        team_ids = current_seeds["TeamID"].unique()
+            # Generate all possible matchups
+            team_ids = current_seeds["TeamID"].unique()
         matchups = []
 
         for i, team1_id in enumerate(team_ids):
@@ -125,13 +132,29 @@ class MarchMadnessPredictor:
                 else:
                     pred = 1.0 - self.predict_game(team2_id, team1_id, method=method)
 
-                matchups.append({"ID": matchup_id, "Pred": pred})
+                matchups.append(
+                    {
+                        "ID": matchup_id,
+                        "Pred": pred,
+                        "Team1Name": self.data_manager.get_team_name(team1_id),
+                        "Team2Name": self.data_manager.get_team_name(team2_id),
+                        "Team1ELO": self.elo_system.get_team_elo(
+                            self.current_season, team1_id
+                        ),
+                        "Team2ELO": self.elo_system.get_team_elo(
+                            self.current_season, team2_id
+                        ),
+                    }
+                )
 
         # Create submission DataFrame
         submission_df = pd.DataFrame(matchups)
 
         # Save to file if requested
         if submission_file:
+            if os.path.exists(submission_file):
+                existing_df = pd.read_csv(submission_file)
+                submission_df = pd.concat([existing_df, submission_df])
             submission_df.to_csv(submission_file, index=False)
             print(f"Saved {len(submission_df)} predictions to {submission_file}")
 

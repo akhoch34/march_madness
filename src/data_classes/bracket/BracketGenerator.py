@@ -1,12 +1,9 @@
-
+import math
 from typing import Tuple
 from PIL import Image, ImageDraw, ImageFont
 from binarytree import Node
-import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-from io import BytesIO
 
 from src.data_classes.processing import MarchMadnessPredictor
 from src.data_classes.bracket.seed_slots import SLOTS
@@ -21,6 +18,8 @@ class BracketNode(Node):
         self.seed: int = None
         self.team_name: str = None
         self.win_prob: float = None
+        self.odds: float = None
+    
         
     def __setattr__(self, name, value):
         """Override to maintain parent references when children are added"""
@@ -148,7 +147,7 @@ class BracketSimulator:
         
         return root, seed_slot_map
     
-    def simulate_bracket(self, method='ensemble'):
+    def simulate_bracket(self, method='ensemble', betting_odds=False):
         """
         Simulate the tournament bracket using the predictor
         
@@ -199,6 +198,62 @@ class BracketSimulator:
             # Adjust if we reversed the teams
             return 1 - pred if is_reversed else pred
         
+        def win_probability_to_spread(win_probability, std_dev=11.0, calibration=1.8, tournament_mode=True):
+            """
+            Convert a win probability to an implied point spread for basketball
+            with special handling for extreme mismatches in tournament games.
+            
+            Parameters:
+            win_probability (float): Probability that Team 1 will win (between 0 and 1)
+            std_dev (float): Standard deviation of scoring margin (default 11 for college basketball)
+            calibration (float): Calibration factor for the conversion (lower = larger spreads)
+            tournament_mode (bool): Enable special handling for tournament mismatches
+            
+            Returns:
+            float: Implied point spread (negative means Team 1 is favored)
+            """
+            # Ensure win probability is within valid range
+            win_probability = min(max(win_probability, 0.01), 0.99)
+            
+            # Convert win probability to a spread using the logit function
+            logit = math.log(win_probability / (1 - win_probability))
+            
+            # Base calculation
+            point_spread = -logit * std_dev / calibration
+            
+            # Special handling for tournament mode extreme mismatches
+            if tournament_mode and win_probability > 0.85:
+                # Apply additional scaling for very high probabilities
+                # This helps match the observed spreads in tournament games
+                extra_factor = (win_probability - 0.85) * 2.5
+                point_spread = point_spread * (1 + extra_factor)
+            
+            return point_spread
+        
+        def format_spread(point_spread):
+            """
+            Format a point spread with team name and spread in standard betting notation.
+            
+            Parameters:
+            team_name (str): Name of the team
+            point_spread (float): Point spread (negative means team is favored)
+            
+            Returns:
+            str: Formatted string like "Team (-1.5)" or "Team (+3.0)"
+            """
+            # Round to nearest half point (common in betting markets)
+            rounded_spread = round(point_spread * 2) / 2
+            
+            if rounded_spread < 0:
+                # Team is favored
+                return f" ({rounded_spread})"
+            elif rounded_spread > 0:
+                # Team is underdog
+                return f" (+{rounded_spread})"
+            else:
+                # Pick'em (even odds)
+                return f" (PK)"
+
         # Solve the bracket by traversing the tree from bottom up
         # We'll fill in the leaf nodes first, then work our way up
         levels = list(reversed(self.bracket_tree.levels))
@@ -237,8 +292,14 @@ class BracketSimulator:
                     # Determine the winner
                     if win_prob > 0.5:
                         winner = left_node
+                        if betting_odds:
+                            winner.odds = win_probability_to_spread(winner.win_prob)
+                            right_node.odds = None
                     else:
                         winner = right_node
+                        if betting_odds:
+                            winner.odds = win_probability_to_spread(winner.win_prob)
+                            left_node.odds = None
                     
                     # Advance the winner to the parent node
                     if left_node.parent is not None:  # Should be the same as right_node.parent
@@ -263,7 +324,13 @@ class BracketSimulator:
             if node.team_name:
                 # Show seed, team name, and probability if it's a non-root node
                 if node.parent is not None and node.win_prob is not None:
-                    prob_text = f" {node.win_prob:.1%}"
+                    if betting_odds:
+                        if node.odds is not None:
+                            prob_text = format_spread(node.odds)
+                        else:
+                            prob_text = ""
+                    else:
+                        prob_text = f" {node.win_prob:.1%}"
                 else:
                     prob_text = ""
                 
@@ -289,10 +356,10 @@ class BracketSimulator:
         fig: Matplotlib figure object
         """
         # Simulate the bracket
-        slot_data = self.simulate_bracket(method=method)
+        slot_data = self.simulate_bracket(method=method, betting_odds=betting_odds)
         
         # Load the empty bracket template
-        empty_bracket_path = "./empty.jpg"  # Update with your path
+        empty_bracket_path = "data_classes/bracket/empty.jpg"  # Update with your path
         
         try:
             img = Image.open(empty_bracket_path)

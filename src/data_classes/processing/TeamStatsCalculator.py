@@ -202,7 +202,7 @@ class TeamStatsCalculator:
         season_stats[team_id]["OppBlk"] += game[f"{opp_prefix}Blk"]
         season_stats[team_id]["OppPF"] += game[f"{opp_prefix}PF"]
 
-    def _calculate_team_advanced_stats(self, stats):
+    def _calculate_team_advanced_stats(self, stats: dict):
         """Calculate advanced stats for a team based on accumulated basic stats"""
         # Calculate shooting percentages
         stats["FG%"] = stats["FGM"] / stats["FGA"] if stats["FGA"] > 0 else 0
