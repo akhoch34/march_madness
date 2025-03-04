@@ -12,7 +12,7 @@ import os
 class MarchMadnessPredictor:
     """Master class that orchestrates the tournament prediction process"""
 
-    def __init__(self, data_dir, gender="M", current_season=2025):
+    def __init__(self, data_dir=None, gender="M", current_season=2025, data_manager: MarchMadnessDataManager = None):
         """
         Initialize the March Madness predictor
 
@@ -22,8 +22,10 @@ class MarchMadnessPredictor:
         current_season (int): The current season year (for prediction)
         """
         # Initialize data manager
-        self.data_manager = MarchMadnessDataManager(data_dir, gender, current_season)
-        self.data_manager.load_data()
+        self.data_manager = data_manager
+        if not data_manager:
+            self.data_manager = MarchMadnessDataManager(data_dir, gender, current_season)
+            self.data_manager.load_data()
 
         # Initialize component systems
         self.elo_system = EloRatingSystem(self.data_manager)
@@ -42,13 +44,13 @@ class MarchMadnessPredictor:
         self, calculate_elo=True, calculate_stats=True, train_ml=False
     ):
         """Initialize all prediction models"""
-        if calculate_elo:
+        if calculate_elo and not self.elo_system.team_elo_ratings:
             self.elo_system.calculate_elo_ratings()
 
-        if calculate_stats and self.data_manager.detailed_stats_available:
+        if calculate_stats and self.data_manager.detailed_stats_available and not self.stats_calculator.advanced_team_stats:
             self.stats_calculator.calculate_advanced_team_stats()
 
-        if train_ml:
+        if train_ml and not self.ml_model.model:
             self.ml_model = MarchMadnessMLModel(
                 self.data_manager, self.elo_system, self.stats_calculator
             )
@@ -78,7 +80,7 @@ class MarchMadnessPredictor:
         # Get ML prediction if available and requested
         ml_pred = None
         if method in ["ml", "ensemble"] and self.ml_model is not None:
-            ml_pred = self.ml_model.predict(team1_id, team2_id, day_num, season)
+            ml_pred = self.ml_model.predict(team1_id, team2_id, season)
 
         # Return appropriate prediction
         if method == "elo":
@@ -127,10 +129,7 @@ class MarchMadnessPredictor:
                 matchup_id = f"{self.current_season}_{min(team1_id, team2_id)}_{max(team1_id, team2_id)}"
 
                 # Make prediction
-                if team1_id < team2_id:
-                    pred = self.predict_game(team1_id, team2_id, method=method)
-                else:
-                    pred = 1.0 - self.predict_game(team2_id, team1_id, method=method)
+                pred = self.predict_game(team1_id, team2_id, method=method)
 
                 matchups.append(
                     {
@@ -160,7 +159,7 @@ class MarchMadnessPredictor:
 
         return submission_df
 
-    def backtest_tournament(self, test_season, method="ensemble", visualize=True):
+    def backtest_tournament(self, test_season, method="ensemble", visualize=True, get_all_matchups=False):
         """
         Backtest predictions on a historical tournament
 
@@ -181,7 +180,6 @@ class MarchMadnessPredictor:
         if len(test_games) == 0:
             print(f"No games found for {test_season} tournament")
             return None
-
         # Generate predictions and evaluate
         predictions = []
         actuals = []
@@ -190,7 +188,7 @@ class MarchMadnessPredictor:
         for _, game in test_games.iterrows():
             day_num = game["DayNum"]
             team1_id = game["WTeamID"]  # Winner
-            team2_id = game["LTeamID"]  # Loser
+            team2_id = game['LTeamID']  # Loser
 
             # Get prediction
             pred = self.predict_game(
@@ -353,7 +351,7 @@ class MarchMadnessPredictor:
 
         return {"aggregate": agg_metrics, "per_season": all_results}
 
-    def compare_methods(self, test_seasons=None):
+    def compare_methods(self, test_seasons=None, visualize=True):
         """
         Compare different prediction methods on multiple seasons
 
@@ -391,43 +389,44 @@ class MarchMadnessPredictor:
         # Display results
         print("Method Comparison:")
         print(comparison)
+        if visualize:
 
-        # Visualize
-        plt.figure(figsize=(12, 6))
+            # Visualize
+            plt.figure(figsize=(12, 6))
 
-        metrics = ["Accuracy", "Brier Score", "Log Loss"]
-        colors = ["green", "red", "blue"]
+            metrics = ["Accuracy", "Brier Score", "Log Loss"]
+            colors = ["green", "red", "blue"]
 
-        for i, metric in enumerate(metrics):
-            plt.subplot(1, 3, i + 1)
+            for i, metric in enumerate(metrics):
+                plt.subplot(1, 3, i + 1)
 
-            if metric == "Accuracy":
-                # Higher is better
-                bars = plt.bar(
-                    comparison["Method"], comparison[metric], color=colors[i], alpha=0.7
-                )
-                plt.ylabel(metric)
-                plt.title(f"{metric} (higher is better)")
-            else:
-                # Lower is better
-                bars = plt.bar(
-                    comparison["Method"], comparison[metric], color=colors[i], alpha=0.7
-                )
-                plt.ylabel(metric)
-                plt.title(f"{metric} (lower is better)")
+                if metric == "Accuracy":
+                    # Higher is better
+                    bars = plt.bar(
+                        comparison["Method"], comparison[metric], color=colors[i], alpha=0.7
+                    )
+                    plt.ylabel(metric)
+                    plt.title(f"{metric} (higher is better)")
+                else:
+                    # Lower is better
+                    bars = plt.bar(
+                        comparison["Method"], comparison[metric], color=colors[i], alpha=0.7
+                    )
+                    plt.ylabel(metric)
+                    plt.title(f"{metric} (lower is better)")
 
-            # Add values on bars
-            for bar in bars:
-                height = bar.get_height()
-                plt.text(
-                    bar.get_x() + bar.get_width() / 2.0,
-                    height + 0.005,
-                    f"{height:.4f}",
-                    ha="center",
-                    va="bottom",
-                )
+                # Add values on bars
+                for bar in bars:
+                    height = bar.get_height()
+                    plt.text(
+                        bar.get_x() + bar.get_width() / 2.0,
+                        height + 0.005,
+                        f"{height:.4f}",
+                        ha="center",
+                        va="bottom",
+                    )
 
-        plt.tight_layout()
-        plt.show()
+            plt.tight_layout()
+            plt.show()
 
         return comparison
