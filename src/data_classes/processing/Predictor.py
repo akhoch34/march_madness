@@ -12,52 +12,50 @@ import os
 class MarchMadnessPredictor:
     """Master class that orchestrates the tournament prediction process"""
 
-    def __init__(self, data_dir=None, gender="M", current_season=2025, data_manager: MarchMadnessDataManager = None):
+    def __init__(
+        self,
+        data_manager: MarchMadnessDataManager,
+        elo_system: EloRatingSystem,
+        stats_calculator: TeamStatsCalculator,
+        ml_model: MarchMadnessMLModel,
+        current_season=2025,
+    ):
         """
         Initialize the March Madness predictor
 
         Parameters:
-        data_dir (str): Directory containing the data files
-        gender (str): 'M' for men's tournament, 'W' for women's
+        data_manager: DataManager instance for loading data
+        elo_system: EloRatingSystem instance for ELO ratings
+        stats_calculator: TeamStatsCalculator instance for advanced metrics
+        ml_model: MarchMadnessMLModel instance
         current_season (int): The current season year (for prediction)
         """
-        # Initialize data manager
-        self.data_manager = data_manager
-        if not data_manager:
-            self.data_manager = MarchMadnessDataManager(data_dir, gender, current_season)
-            self.data_manager.load_data()
-
         # Initialize component systems
-        self.elo_system = EloRatingSystem(self.data_manager)
-        self.stats_calculator = TeamStatsCalculator(self.data_manager)
+        self.data_manager = data_manager
+        self.elo_system = elo_system
+        self.stats_calculator = stats_calculator
         self.visualizer = TournamentVisualizer(self.data_manager)
-
-        # Initialize ML model
-        self.ml_model = MarchMadnessMLModel(
-            self.data_manager, self.elo_system, self.stats_calculator
-        )
-
-        # Store current season
+        self.ml_model = ml_model
         self.current_season = current_season
 
     def initialize_models(
-        self, calculate_elo=True, calculate_stats=True, train_ml=False
+        self, calculate_elo=True, calculate_stats=True, train_ml=True
     ):
         """Initialize all prediction models"""
         if calculate_elo and not self.elo_system.team_elo_ratings:
+            print("Calculating ELO ratings...")
             self.elo_system.calculate_elo_ratings()
 
-        if calculate_stats and self.data_manager.detailed_stats_available and not self.stats_calculator.advanced_team_stats:
+        if calculate_stats and not self.stats_calculator.advanced_team_stats:
+            print("Calculating advanced team statistics...")
             self.stats_calculator.calculate_advanced_team_stats()
 
-        if train_ml and not self.ml_model.model:
-            self.ml_model = MarchMadnessMLModel(
-                self.data_manager, self.elo_system, self.stats_calculator
-            )
-            self.ml_model.train_model()
+        if train_ml:
+            print("Training ML model...")
+            self.ml_model.train_model(model_type="xgboost")
 
     def predict_game(
-        self, team1_id, team2_id, day_num=134, season=None, method="ensemble"
+        self, team1_id, team2_id, day_num=134, season=None, method="elo_enhanced"
     ):
         """
         Predict the outcome of a game
@@ -66,7 +64,7 @@ class MarchMadnessPredictor:
         team1_id, team2_id: Team IDs
         day_num: Day number (defaults to first round of tournament)
         season: Season (defaults to current_season)
-        method: Prediction method ('elo', 'ml', or 'ensemble')
+        method: Prediction method ('elo', 'elo_enhanced')
 
         Returns:
         float: Probability of team1 winning
@@ -77,40 +75,55 @@ class MarchMadnessPredictor:
         # Get ELO prediction
         elo_pred = self.elo_system.predict_game(team1_id, team2_id, day_num, season)
 
-        # Get ML prediction if available and requested
-        ml_pred = None
-        if method in ["ml", "ensemble"] and self.ml_model is not None:
-            ml_pred = self.ml_model.predict(team1_id, team2_id, season)
-
         # Return appropriate prediction
         if method == "elo":
             return elo_pred
-        elif method == "ml" and ml_pred is not None:
-            return ml_pred
-        elif method == "ensemble" and ml_pred is not None:
-            # Simple weighted ensemble
-            return 0.6 * ml_pred + 0.4 * elo_pred
+        elif method == "elo_enhanced" and self.ml_model is not None:
+            # Use ELO-enhanced model
+            return self.ml_model.predict(team1_id, team2_id, season, day_num)
         else:
-            # Default to ELO if ML not available
+            # Default to ELO
             return elo_pred
 
     def generate_predictions(
-        self, submission_file=None, method="ensemble", get_all_matchups=False
+        self,
+        submission_file=None,
+        method="elo_enhanced",
+        get_all_matchups=False,
+        tournament_teams_only=False,
     ):
         """
-        Generate predictions for the current tournament
+        Generate predictions for the tournament
 
         Parameters:
-        submission_file (str): Path to save the submission file
-        method: Prediction method ('elo', 'ml', or 'ensemble')
+        submission_file (str): Optional path to save the submission file
+        method (str): Prediction method ('elo', 'elo_enhanced')
+        get_all_matchups (bool): Whether to generate predictions for all possible team matchups
+        tournament_teams_only (bool): Whether to limit to only actual tournament teams
 
         Returns:
-        DataFrame: Prediction results
+        DataFrame: Prediction results with team details
         """
+        print(f"Generating predictions using {method} method...")
+        print("new")
+
+        # Determine which teams to include
         if get_all_matchups:
+            # All teams in the dataset
             team_ids = self.data_manager.data["teams"]["TeamID"].unique()
-        # Get current season seeds
+            print(
+                f"Generating predictions for all {len(team_ids)} teams ({len(team_ids)*(len(team_ids)-1)//2} matchups)"
+            )
+        elif tournament_teams_only:
+            # Only teams in the tournament
+            team_ids = self.data_manager.get_tournament_teams(self.current_season)[
+                "TeamID"
+            ].unique()
+            print(
+                f"Generating predictions for {len(team_ids)} tournament teams ({len(team_ids)*(len(team_ids)-1)//2} matchups)"
+            )
         else:
+            # Default: Use current season teams from seeds
             current_seeds = self.data_manager.data["processed_seeds"][
                 self.data_manager.data["processed_seeds"]["Season"]
                 == self.current_season
@@ -119,9 +132,17 @@ class MarchMadnessPredictor:
             if len(current_seeds) == 0:
                 raise ValueError(f"No seed data found for season {self.current_season}")
 
-            # Generate all possible matchups
             team_ids = current_seeds["TeamID"].unique()
+            print(
+                f"Generating predictions for {len(team_ids)} seeded teams ({len(team_ids)*(len(team_ids)-1)//2} matchups)"
+            )
+
+        # Generate all possible matchups
         matchups = []
+
+        # Track progress for large datasets
+        count = 0
+        total = len(team_ids) * (len(team_ids) - 1) // 2
 
         for i, team1_id in enumerate(team_ids):
             for team2_id in team_ids[i + 1 :]:
@@ -131,35 +152,95 @@ class MarchMadnessPredictor:
                 # Make prediction
                 pred = self.predict_game(team1_id, team2_id, method=method)
 
-                matchups.append(
-                    {
-                        "ID": matchup_id,
-                        "Pred": pred,
-                        "Team1Name": self.data_manager.get_team_name(team1_id),
-                        "Team2Name": self.data_manager.get_team_name(team2_id),
-                        "Team1ELO": self.elo_system.get_team_elo(
-                            self.current_season, team1_id
-                        ),
-                        "Team2ELO": self.elo_system.get_team_elo(
-                            self.current_season, team2_id
-                        ),
-                    }
+                # Get seed info if available
+                team1_seed = self.data_manager.seed_lookup.get(
+                    (self.current_season, team1_id), None
+                )
+                team2_seed = self.data_manager.seed_lookup.get(
+                    (self.current_season, team2_id), None
                 )
 
-        # Create submission DataFrame
-        submission_df = pd.DataFrame(matchups)
+                # Create matchup data
+                matchup_data = {
+                    "ID": matchup_id,
+                    "Pred": pred,
+                    "Team1ID": team1_id,
+                    "Team2ID": team2_id,
+                    "Team1Name": self.data_manager.get_team_name(team1_id),
+                    "Team2Name": self.data_manager.get_team_name(team2_id),
+                    "Team1ELO": self.elo_system.get_team_elo(
+                        self.current_season, team1_id
+                    ),
+                    "Team2ELO": self.elo_system.get_team_elo(
+                        self.current_season, team2_id
+                    ),
+                }
 
-        # Save to file if requested
+                # Add seed info if available
+                if team1_seed is not None and team2_seed is not None:
+                    matchup_data.update(
+                        {"Team1Seed": team1_seed, "Team2Seed": team2_seed}
+                    )
+
+                matchups.append(matchup_data)
+
+                # Show progress for large datasets
+                count += 1
+                if total > 1000 and count % 1000 == 0:
+                    print(f"Processed {count}/{total} matchups ({count/total:.1%})")
+
+        # Create DataFrame with predictions
+        predictions_df = pd.DataFrame(matchups)
+
+        # Save to submission file if requested
         if submission_file:
+            # For Kaggle submission, only need ID and Pred columns
+            submission_cols = ["ID", "Pred"]
+
+            # Check if file exists and append if needed
             if os.path.exists(submission_file):
                 existing_df = pd.read_csv(submission_file)
-                submission_df = pd.concat([existing_df, submission_df])
+                submission_df = pd.concat(
+                    [existing_df, predictions_df[submission_cols]]
+                )
+                submission_df = submission_df.drop_duplicates(subset=["ID"])
+            else:
+                submission_df = predictions_df[submission_cols]
+
+            # Save the file
             submission_df.to_csv(submission_file, index=False)
             print(f"Saved {len(submission_df)} predictions to {submission_file}")
 
-        return submission_df
+        return predictions_df
 
-    def backtest_tournament(self, test_season, method="ensemble", visualize=True, get_all_matchups=False):
+    def predict_tournament_bracket(self, method="elo_enhanced"):
+        """
+        Generate the complete tournament bracket predictions
+
+        Parameters:
+        method (str): Prediction method to use
+
+        Returns:
+        DataFrame: Tournament bracket predictions
+        """
+        # Check that we have tournament teams
+        tournament_teams = self.data_manager.get_tournament_teams(self.current_season)
+
+        if len(tournament_teams) == 0:
+            raise ValueError(
+                f"No tournament teams found for season {self.current_season}"
+            )
+
+        print(f"Predicting tournament bracket for {len(tournament_teams)} teams...")
+
+        # Generate predictions just for tournament teams
+        predictions_df = self.generate_predictions(
+            method=method, tournament_teams_only=True
+        )
+
+        return predictions_df
+
+    def backtest_tournament(self, test_season, method="elo_enhanced", visualize=True):
         """
         Backtest predictions on a historical tournament
 
@@ -180,6 +261,7 @@ class MarchMadnessPredictor:
         if len(test_games) == 0:
             print(f"No games found for {test_season} tournament")
             return None
+
         # Generate predictions and evaluate
         predictions = []
         actuals = []
@@ -188,7 +270,7 @@ class MarchMadnessPredictor:
         for _, game in test_games.iterrows():
             day_num = game["DayNum"]
             team1_id = game["WTeamID"]  # Winner
-            team2_id = game['LTeamID']  # Loser
+            team2_id = game["LTeamID"]  # Loser
 
             # Get prediction
             pred = self.predict_game(
@@ -294,7 +376,7 @@ class MarchMadnessPredictor:
         return results
 
     def backtest_multiple_seasons(
-        self, seasons=None, method="ensemble", visualize=True
+        self, seasons=None, method="elo_enhanced", visualize=True
     ):
         """
         Backtest on multiple tournament seasons
@@ -361,9 +443,7 @@ class MarchMadnessPredictor:
         Returns:
         DataFrame: Comparison of methods
         """
-        methods = ["elo"]
-        if self.ml_model is not None:
-            methods.extend(["ml", "ensemble"])
+        methods = ["elo", "elo_enhanced"]
 
         results = []
 
@@ -389,8 +469,8 @@ class MarchMadnessPredictor:
         # Display results
         print("Method Comparison:")
         print(comparison)
-        if visualize:
 
+        if visualize:
             # Visualize
             plt.figure(figsize=(12, 6))
 
@@ -403,14 +483,20 @@ class MarchMadnessPredictor:
                 if metric == "Accuracy":
                     # Higher is better
                     bars = plt.bar(
-                        comparison["Method"], comparison[metric], color=colors[i], alpha=0.7
+                        comparison["Method"],
+                        comparison[metric],
+                        color=colors[i],
+                        alpha=0.7,
                     )
                     plt.ylabel(metric)
                     plt.title(f"{metric} (higher is better)")
                 else:
                     # Lower is better
                     bars = plt.bar(
-                        comparison["Method"], comparison[metric], color=colors[i], alpha=0.7
+                        comparison["Method"],
+                        comparison[metric],
+                        color=colors[i],
+                        alpha=0.7,
                     )
                     plt.ylabel(metric)
                     plt.title(f"{metric} (lower is better)")

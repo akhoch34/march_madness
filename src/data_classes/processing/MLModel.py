@@ -1,6 +1,10 @@
-from sklearn.metrics import accuracy_score, log_loss, brier_score_loss
+from sklearn.metrics import (
+    accuracy_score,
+    log_loss,
+    brier_score_loss,
+    mean_squared_error,
+)
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
 import xgboost as xgb
 import matplotlib.pyplot as plt
 import numpy as np
@@ -22,16 +26,23 @@ class MarchMadnessMLModel:
         self.elo_system = elo_system
         self.stats_calculator = stats_calculator
         self.model = None
-        self.feature_df: pd.DataFrame = None
+        self.feature_df = None
         self.feature_columns = None
-        self.exclude_columns = ["Result", "Season", "Team1ID", "Team2ID"]
+        self.exclude_columns = [
+            "Result",
+            "Season",
+            "Team1ID",
+            "Team2ID",
+            "ELOWinProb",
+            "ELO_residual",
+        ]
+        self._feature_dataset_created = False
 
     def create_feature_dataset(
         self,
         train_years_range=(2010, 2024),
         include_elo=True,
         include_advanced_stats=True,
-        include_all_matchups=False,
     ):
         """
         Create a dataset with features for training and prediction.
@@ -41,27 +52,37 @@ class MarchMadnessMLModel:
         include_elo (bool): Whether to include ELO rating features
         include_advanced_stats (bool): Whether to include advanced box score stats
         """
-        if self.feature_df is not None:
-            print("Skipping feature creation, we already have a dataframe")
+        # Prevent infinite recursion
+        if self._feature_dataset_created:
+            print("Feature dataset already created, skipping")
             return self.feature_df
 
         print("Creating feature dataset...")
+
         # Process seeds first
         self.data_manager.preprocess_seeds()
 
         # Calculate ELO ratings if needed
-        if include_elo and not self.elo_system.team_elo_ratings:
+        if include_elo and (
+            not hasattr(self.elo_system, "team_elo_ratings")
+            or not self.elo_system.team_elo_ratings
+        ):
             self.elo_system.calculate_elo_ratings(
                 start_year=min(train_years_range[0] - 2, 2003)
             )
 
         # Calculate advanced stats if needed
-        if include_advanced_stats and self.stats_calculator.advanced_team_stats != {}:
+        advanced_stats_calculated = (
+            hasattr(self.stats_calculator, "advanced_team_stats")
+            and self.stats_calculator.advanced_team_stats
+        )
+
+        if include_advanced_stats and not advanced_stats_calculated:
             self.stats_calculator.calculate_advanced_team_stats(
                 start_season=min(train_years_range[0], 2003)
             )
 
-        # Get all possible tournament matchups from historical data
+        # Get all tournament matchups from historical data
         tourney_games = self.data_manager.data["tourney_results"].copy()
 
         # Create features for each historical matchup
@@ -104,8 +125,8 @@ class MarchMadnessMLModel:
                     self._get_ranking_features(season, team1_id, team2_id)
                 )
 
-            # Add ELO rating features if available
-            if include_elo and self.elo_system.team_elo_ratings:
+            # Add ELO rating features and residual
+            if include_elo:
                 # Get ELO ratings just before this tournament game
                 # We use day_num - 1 to ensure we don't leak future information
                 team1_elo = self.elo_system.get_team_elo(season, team1_id, day_num - 1)
@@ -114,19 +135,22 @@ class MarchMadnessMLModel:
                 # Calculate win probability
                 elo_win_prob = self.elo_system.elo_win_probability(team1_elo, team2_elo)
 
+                # Calculate ELO residual (actual - predicted)
+                elo_residual = 1 - elo_win_prob  # Team1 won, so Result=1
+
                 game_features.update(
                     {
                         "Team1ELO": team1_elo,
                         "Team2ELO": team2_elo,
                         "ELODiff": team1_elo - team2_elo,
                         "ELOWinProb": elo_win_prob,
+                        "ELO_residual": elo_residual,
                     }
                 )
 
             # Add advanced stats features if available
-            if (
-                include_advanced_stats
-                and hasattr(self, "advanced_team_stats")
+            if include_advanced_stats and (
+                hasattr(self.stats_calculator, "advanced_team_stats")
                 and self.stats_calculator.advanced_team_stats
             ):
                 game_features.update(
@@ -136,60 +160,7 @@ class MarchMadnessMLModel:
             features.append(game_features)
 
             # Also add the reversed matchup (with opposite result)
-            reversed_features = game_features.copy()
-            reversed_features["Team1ID"] = team2_id
-            reversed_features["Team2ID"] = team1_id
-            reversed_features["Team1Seed"] = team2_seed
-            reversed_features["Team2Seed"] = team1_seed
-            reversed_features["SeedDiff"] = team1_seed - team2_seed
-            reversed_features["Result"] = 0  # Team1 lost
-
-            # Reverse any asymmetric stat features
-            if "Team1WinPct" in reversed_features:
-                reversed_features["Team1WinPct"] = game_features["Team2WinPct"]
-                reversed_features["Team2WinPct"] = game_features["Team1WinPct"]
-
-            # Reverse strength of schedule features if present
-            if "Team1SOS" in reversed_features:
-                reversed_features["Team1SOS"] = game_features["Team2SOS"]
-                reversed_features["Team2SOS"] = game_features["Team1SOS"]
-                reversed_features["SOSDiff"] = -game_features["SOSDiff"]
-
-            # Reverse last 10 features if present
-            if "Team1Last10" in reversed_features:
-                reversed_features["Team1Last10"] = game_features["Team2Last10"]
-                reversed_features["Team2Last10"] = game_features["Team1Last10"]
-                reversed_features["Last10Diff"] = -game_features["Last10Diff"]
-
-            # Reverse ELO features if present
-            if "Team1ELO" in reversed_features:
-                reversed_features["Team1ELO"] = game_features["Team2ELO"]
-                reversed_features["Team2ELO"] = game_features["Team1ELO"]
-                reversed_features["ELODiff"] = -game_features["ELODiff"]
-                reversed_features["ELOWinProb"] = 1.0 - game_features["ELOWinProb"]
-
-            # Reverse advanced stats features if present
-            for key in list(reversed_features.keys()):
-                # Look for keys with Team1_ prefix that need to be swapped
-                if (
-                    key.startswith("Team1_")
-                    and key.replace("Team1_", "Team2_") in reversed_features
-                ):
-                    team1_key = key
-                    team2_key = key.replace("Team1_", "Team2_")
-                    reversed_features[team1_key] = game_features[team2_key]
-                    reversed_features[team2_key] = game_features[team1_key]
-
-                # Flip the sign of all difference features
-                if key.endswith("_Diff") and key not in [
-                    "SeedDiff",
-                    "ELODiff",
-                    "WinPctDiff",
-                    "SOSDiff",
-                    "Last10Diff",
-                ]:
-                    reversed_features[key] = -game_features[key]
-
+            reversed_features = self._create_reversed_features(game_features)
             features.append(reversed_features)
 
         # Create DataFrame with all features
@@ -198,12 +169,335 @@ class MarchMadnessMLModel:
 
         # Define feature columns (excluding outcome and identifiers)
         self.feature_columns = [
-            col
-            for col in self.feature_df.columns
-            if col not in ["Result", "Season", "Team1ID", "Team2ID"]
+            col for col in self.feature_df.columns if col not in self.exclude_columns
         ]
 
+        # Set flag to avoid infinite recursion
+        self._feature_dataset_created = True
+
         return self.feature_df
+
+    def _create_reversed_features(self, game_features):
+        """Create reversed features (swap team1 and team2)"""
+        reversed_features = game_features.copy()
+
+        team1_id = game_features["Team1ID"]
+        team2_id = game_features["Team2ID"]
+        team1_seed = game_features["Team1Seed"]
+        team2_seed = game_features["Team2Seed"]
+
+        reversed_features["Team1ID"] = team2_id
+        reversed_features["Team2ID"] = team1_id
+        reversed_features["Team1Seed"] = team2_seed
+        reversed_features["Team2Seed"] = team1_seed
+        reversed_features["SeedDiff"] = team1_seed - team2_seed
+        reversed_features["Result"] = 0  # Team1 lost
+
+        # Reverse any asymmetric stat features
+        if "Team1WinPct" in reversed_features:
+            reversed_features["Team1WinPct"] = game_features["Team2WinPct"]
+            reversed_features["Team2WinPct"] = game_features["Team1WinPct"]
+            reversed_features["WinPctDiff"] = -game_features["WinPctDiff"]
+
+        # Reverse strength of schedule features if present
+        if "Team1SOS" in reversed_features:
+            reversed_features["Team1SOS"] = game_features["Team2SOS"]
+            reversed_features["Team2SOS"] = game_features["Team1SOS"]
+            reversed_features["SOSDiff"] = -game_features["SOSDiff"]
+
+        # Reverse last 10 features if present
+        if "Team1Last10" in reversed_features:
+            reversed_features["Team1Last10"] = game_features["Team2Last10"]
+            reversed_features["Team2Last10"] = game_features["Team1Last10"]
+            reversed_features["Last10Diff"] = -game_features["Last10Diff"]
+
+        # Reverse ELO features if present
+        if "Team1ELO" in reversed_features:
+            reversed_features["Team1ELO"] = game_features["Team2ELO"]
+            reversed_features["Team2ELO"] = game_features["Team1ELO"]
+            reversed_features["ELODiff"] = -game_features["ELODiff"]
+            reversed_features["ELOWinProb"] = 1.0 - game_features["ELOWinProb"]
+            if "ELO_residual" in game_features:
+                # Reverse residual (actual - predicted) for losing team
+                # Team2 lost, so actual=0
+                reversed_features["ELO_residual"] = 0 - (
+                    1.0 - game_features["ELOWinProb"]
+                )
+
+        # Reverse advanced stats features if present
+        for key in list(reversed_features.keys()):
+            # Look for keys with Team1_ prefix that need to be swapped
+            if (
+                key.startswith("Team1_")
+                and key.replace("Team1_", "Team2_") in reversed_features
+            ):
+                team1_key = key
+                team2_key = key.replace("Team1_", "Team2_")
+                reversed_features[team1_key] = game_features[team2_key]
+                reversed_features[team2_key] = game_features[team1_key]
+
+            # Flip the sign of all difference features
+            if key.endswith("_Diff") and key not in [
+                "SeedDiff",
+                "ELODiff",
+                "WinPctDiff",
+                "SOSDiff",
+                "Last10Diff",
+            ]:
+                reversed_features[key] = -game_features[key]
+
+        return reversed_features
+
+    def generate_features_for_matchup(self, team1_id, team2_id, season, day_num=132):
+        """Generate features for a new matchup"""
+        # Get seed information if available
+        team1_seed = self.data_manager.seed_lookup.get((season, team1_id), 16)
+        team2_seed = self.data_manager.seed_lookup.get((season, team2_id), 16)
+
+        # Basic features
+        game_features = {
+            "Season": season,
+            "Team1ID": team1_id,
+            "Team2ID": team2_id,
+            "Team1Seed": team1_seed,
+            "Team2Seed": team2_seed,
+            "SeedDiff": team2_seed - team1_seed,
+        }
+
+        # Add season performance metrics
+        game_features.update(self._get_season_stats(season, team1_id, team2_id))
+
+        # Add ranking features if available
+        if self.data_manager.rankings_available:
+            game_features.update(self._get_ranking_features(season, team1_id, team2_id))
+
+        # Add ELO rating features
+        if (
+            hasattr(self.elo_system, "team_elo_ratings")
+            and self.elo_system.team_elo_ratings
+        ):
+            # Get ELO ratings for tournament
+            team1_elo = self.elo_system.get_team_elo(season, team1_id, day_num)
+            team2_elo = self.elo_system.get_team_elo(season, team2_id, day_num)
+
+            # Calculate win probability
+            elo_win_prob = self.elo_system.elo_win_probability(team1_elo, team2_elo)
+
+            game_features.update(
+                {
+                    "Team1ELO": team1_elo,
+                    "Team2ELO": team2_elo,
+                    "ELODiff": team1_elo - team2_elo,
+                    "ELOWinProb": elo_win_prob,
+                }
+            )
+
+        # Add advanced stats features if available
+        if (
+            hasattr(self.stats_calculator, "advanced_team_stats")
+            and self.stats_calculator.advanced_team_stats
+        ):
+            game_features.update(
+                self._get_advanced_stats_features(season, team1_id, team2_id)
+            )
+
+        return game_features
+
+    def get_matchup_features(
+        self, team1_id, team2_id, season, day_num=132
+    ) -> pd.DataFrame:
+        """Get features for a specific matchup, generating them if needed"""
+        # Ensure feature dataset exists
+        if self.feature_df is None:
+            self.create_feature_dataset()
+
+        # Check if this matchup exists in our feature dataset
+        existing_features = self.feature_df[
+            (self.feature_df["Team1ID"] == team1_id)
+            & (self.feature_df["Team2ID"] == team2_id)
+            & (self.feature_df["Season"] == season)
+        ]
+
+        # If we have existing features, return them
+        if len(existing_features) > 0:
+            return existing_features
+
+        # Otherwise, generate new features for this matchup
+        new_features = self.generate_features_for_matchup(
+            team1_id, team2_id, season, day_num
+        )
+
+        # Create a single row DataFrame with these features
+        df_new = pd.DataFrame([new_features])
+
+        # Make sure all required columns are present
+        if self.feature_columns is not None:
+            for col in self.feature_columns:
+                if col not in df_new.columns:
+                    # Add missing column with default value 0
+                    df_new[col] = 0
+
+        return df_new
+
+    def predict(self, team1_id, team2_id, season, day_num=132):
+        """
+        Make a prediction for a specific matchup using the ELO-enhanced model.
+        First gets base ELO prediction, then applies ML correction if available.
+        """
+        # Get base ELO prediction
+        elo_pred = self.elo_system.predict_game(team1_id, team2_id, day_num, season)
+
+        # If we don't have a trained ML model, just return the ELO prediction
+        if self.model is None:
+            return elo_pred
+
+        try:
+            # Get features for this matchup
+            matchup_features = self.get_matchup_features(
+                team1_id, team2_id, season, day_num
+            )
+
+            if len(matchup_features) == 0:
+                print(
+                    f"Warning: No features found for {team1_id} vs {team2_id}. Using ELO fallback."
+                )
+                return elo_pred
+
+            # Extract just the feature columns we need
+            features = matchup_features[self.feature_columns]
+
+            # Make ML prediction (which predicts residual)
+            ml_correction = self.model.predict(features)[0]
+
+            # Apply correction to ELO prediction
+            final_pred = np.clip(elo_pred + ml_correction, 0.01, 0.999)
+
+            return final_pred
+
+        except Exception as e:
+            print(f"Error making prediction: {e}")
+            # Fallback to ELO if ML prediction fails
+            return elo_pred
+
+    def train_model(self, model_type="xgboost", test_size=0.2, random_state=42):
+        """
+        Train a model to predict residuals (corrections) to ELO predictions
+        """
+        print("Training ELO-enhanced ML model...")
+
+        # Create or ensure feature dataset exists
+        if self.feature_df is None or not self._feature_dataset_created:
+            self.create_feature_dataset()
+
+        if "ELO_residual" not in self.feature_df.columns:
+            print("Error: ELO_residual column not found in feature dataset.")
+            return None
+
+        # Prepare features and target (residual)
+        X = self.feature_df[self.feature_columns]
+        y = self.feature_df["ELO_residual"]  # Target is ELO residual
+
+        # Split into training and test sets
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=test_size, random_state=random_state
+        )
+
+        print(f"Training set: {X_train.shape[0]} samples")
+        print(f"Test set: {X_test.shape[0]} samples")
+
+        # Get baseline ELO predictions for evaluation
+        elo_train = self.feature_df.loc[y_train.index, "ELOWinProb"]
+        elo_test = self.feature_df.loc[y_test.index, "ELOWinProb"]
+        y_actual_train = self.feature_df.loc[y_train.index, "Result"]
+        y_actual_test = self.feature_df.loc[y_test.index, "Result"]
+
+        # Initialize model
+        if model_type == "xgboost":
+            self.model = xgb.XGBRegressor(
+                n_estimators=50,
+                learning_rate=0.03,
+                max_depth=2,
+                min_child_weight=3,
+                subsample=0.7,
+                colsample_bytree=0.7,
+                objective="reg:squarederror",
+                random_state=random_state,
+            )
+
+        # Train model on residuals
+        self.model.fit(X_train, y_train)
+
+        # Make predictions
+        train_residuals = self.model.predict(X_train)
+        test_residuals = self.model.predict(X_test)
+
+        # Apply corrections to get final predictions
+        train_preds = np.clip(elo_train + train_residuals, 0.01, 0.999)
+        test_preds = np.clip(elo_test + test_residuals, 0.01, 0.999)
+
+        # Evaluate baseline ELO performance
+        elo_train_acc = accuracy_score(y_actual_train, elo_train > 0.5)
+        elo_test_acc = accuracy_score(y_actual_test, elo_test > 0.5)
+        elo_train_brier = brier_score_loss(y_actual_train, elo_train)
+        elo_test_brier = brier_score_loss(y_actual_test, elo_test)
+        elo_train_log_loss_val = log_loss(y_actual_train, elo_train)
+        elo_test_log_loss_val = log_loss(y_actual_test, elo_test)
+
+        # Evaluate combined model performance
+        train_acc = accuracy_score(y_actual_train, train_preds > 0.5)
+        test_acc = accuracy_score(y_actual_test, test_preds > 0.5)
+        train_brier = brier_score_loss(y_actual_train, train_preds)
+        test_brier = brier_score_loss(y_actual_test, test_preds)
+        train_log_loss_val = log_loss(y_actual_train, train_preds)
+        test_log_loss_val = log_loss(y_actual_test, test_preds)
+
+        # Calculate MSE on residuals
+        train_mse = mean_squared_error(y_train, train_residuals)
+        test_mse = mean_squared_error(y_test, test_residuals)
+
+        # Print comparison results
+        print("\nPerformance Comparison - ELO vs ELO-Enhanced ML:")
+        print(
+            f"{'Metric':<20} {'ELO Train':<12} {'ELO Test':<12} {'Enhanced Train':<12} {'Enhanced Test':<12} {'Improvement':<12}"
+        )
+        print("-" * 80)
+        print(
+            f"{'Accuracy':<20} {elo_train_acc:.4f}{'':<8} {elo_test_acc:.4f}{'':<8} {train_acc:.4f}{'':<8} {test_acc:.4f}{'':<8} {test_acc - elo_test_acc:.4f}"
+        )
+        print(
+            f"{'Brier Score':<20} {elo_train_brier:.4f}{'':<8} {elo_test_brier:.4f}{'':<8} {train_brier:.4f}{'':<8} {test_brier:.4f}{'':<8} {elo_test_brier - test_brier:.4f}"
+        )
+        print(
+            f"{'Log Loss':<20} {elo_train_log_loss_val:.4f}{'':<8} {elo_test_log_loss_val:.4f}{'':<8} {train_log_loss_val:.4f}{'':<8} {test_log_loss_val:.4f}{'':<8} {elo_test_log_loss_val - test_log_loss_val:.4f}"
+        )
+        print(
+            f"{'MSE on Residuals':<20} {'N/A':<12} {'N/A':<12} {train_mse:.4f}{'':<8} {test_mse:.4f}"
+        )
+
+        # Feature importance
+        if hasattr(self.model, "feature_importances_") and self.feature_columns:
+            self._display_feature_importance()
+
+        return self.model
+
+    def _display_feature_importance(self):
+        """Display feature importance from the model"""
+        importances = self.model.feature_importances_
+        indices = np.argsort(importances)[::-1]
+
+        # Only show top 20 features for clarity
+        top_n = min(20, len(self.feature_columns))
+
+        plt.figure(figsize=(12, 8))
+        plt.title("Feature Importance (Top 20)")
+        plt.bar(range(top_n), importances[indices][:top_n], align="center")
+        plt.xticks(
+            range(top_n),
+            [self.feature_columns[i] for i in indices][:top_n],
+            rotation=90,
+        )
+        plt.tight_layout()
+        plt.show()
 
     def _get_season_stats(self, season, team1_id, team2_id):
         """Get season performance stats for both teams"""
@@ -232,7 +526,7 @@ class MarchMadnessMLModel:
 
         # Calculate strength of schedule
         if (
-            hasattr(self, "advanced_team_stats")
+            hasattr(self.stats_calculator, "advanced_team_stats")
             and self.stats_calculator.advanced_team_stats
             and season in self.stats_calculator.advanced_team_stats
         ):
@@ -361,7 +655,7 @@ class MarchMadnessMLModel:
     def _get_advanced_stats_features(self, season, team1_id, team2_id):
         """Get advanced stats features for both teams"""
         if (
-            not hasattr(self, "advanced_team_stats")
+            not hasattr(self.stats_calculator, "advanced_team_stats")
             or not self.stats_calculator.advanced_team_stats
         ):
             self.stats_calculator.calculate_advanced_team_stats()
@@ -445,213 +739,3 @@ class MarchMadnessMLModel:
                 )
 
         return features
-
-    def train_model(self, model_type="randomforest", test_size=0.2, random_state=42):
-        """Train the ML model on historical data"""
-        # Create feature matrix
-        # X, y = self.create_feature_matrix()
-        print("Creating feature dataset...")
-        self.create_feature_dataset()
-        X = self.feature_df[self.feature_columns]
-        print(X)
-        y = self.feature_df["Result"]
-
-        # Split into training and test sets
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=random_state
-        )
-
-        print(f"Training set: {X_train.shape[0]} samples")
-        print(f"Test set: {X_test.shape[0]} samples")
-
-        # Initialize model
-        if model_type == "xgboost":
-            self.model = xgb.XGBClassifier(
-                n_estimators=100,
-                learning_rate=0.05,
-                max_depth=4,
-                min_child_weight=2,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                objective="binary:logistic",
-                random_state=random_state,
-            )
-        elif model_type == "randomforest":
-            self.model = RandomForestClassifier(
-                n_estimators=100,
-                max_depth=5,  # Limit tree depth
-                min_samples_leaf=5,  # Require at least 5 samples per leaf
-                min_samples_split=10,  # Require at least 10 samples to split a node
-                max_features="sqrt",  # Use sqrt(n_features) features per split
-                random_state=42,
-            )
-
-        # Train model
-        self.model.fit(X_train, y_train)
-
-        # Evaluate model
-        train_preds = self.model.predict_proba(X_train)[:, 1]
-        test_preds = self.model.predict_proba(X_test)[:, 1]
-
-        # Calculate metrics
-        train_acc = accuracy_score(y_train, train_preds > 0.5)
-        test_acc = accuracy_score(y_test, test_preds > 0.5)
-
-        train_log_loss = log_loss(y_train, train_preds)
-        test_log_loss = log_loss(y_test, test_preds)
-
-        train_brier = brier_score_loss(y_train, train_preds)
-        test_brier = brier_score_loss(y_test, test_preds)
-
-        print("Model Training Results:")
-        print(f"Training Accuracy: {train_acc:.4f}, Test Accuracy: {test_acc:.4f}")
-        print(
-            f"Training Log Loss: {train_log_loss:.4f}, Test Log Loss: {test_log_loss:.4f}"
-        )
-        print(
-            f"Training Brier Score: {train_brier:.4f}, Test Brier Score: {test_brier:.4f}"
-        )
-
-        # Feature importance
-        if hasattr(self.model, "feature_importances_") and self.feature_columns:
-            self._display_feature_importance()
-
-        return self.model
-
-    def _display_feature_importance(self):
-        """Display feature importance from the model"""
-        importances = self.model.feature_importances_
-        indices = np.argsort(importances)[::-1]
-
-        plt.figure(figsize=(12, 8))
-        plt.title("Feature Importance")
-        plt.bar(range(len(importances)), importances[indices], align="center")
-        plt.xticks(
-            range(len(importances)),
-            [self.feature_columns[i] for i in indices],
-            rotation=90,
-        )
-        plt.tight_layout()
-        plt.show()
-
-    def _get_game_features(self, team1_id, team2_id, season) -> pd.DataFrame:
-        return self.feature_df[
-            (self.feature_df["Team1ID"] == team1_id)
-            & (self.feature_df["Team2ID"] == team2_id)
-            & (self.feature_df["Season"] == season)
-        ]
-
-    def predict(self, team1_id, team2_id, season):
-        """Make a prediction for a specific matchup using the ML model"""
-        if self.model is None:
-            raise ValueError("Model not trained. Call train_model() first.")
-
-        # Create features for this matchup
-        all_features = self._get_game_features(team1_id, team2_id, season)
-        features = all_features[
-            [col for col in all_features.columns if col not in self.exclude_columns]
-        ]
-
-        # Make prediction
-        prediction = self.model.predict_proba(features)[0, 1]
-        print(prediction)
-
-        return prediction
-
-    def analyze_feature_matrix(self, X, feature_names):
-        """
-        Analyze the feature matrix for issues that may affect model performance
-
-        Parameters:
-        X (numpy.ndarray): The feature matrix
-        feature_names (list): List of feature names
-
-        Returns:
-        dict: Dictionary with analysis results
-        """
-        import numpy as np
-        import pandas as pd
-        from scipy import stats
-
-        # Convert to DataFrame for easier analysis
-        df = pd.DataFrame(X, columns=feature_names)
-
-        # Basic statistics
-        basic_stats = df.describe().T
-
-        # Calculate additional metrics
-        analysis = {
-            "missing_values": df.isna().sum().to_dict(),
-            "zero_values": (df == 0).sum().to_dict(),
-            "zero_percentage": ((df == 0).sum() / len(df) * 100).to_dict(),
-            "data_types": df.dtypes.to_dict(),
-            "skewness": df.skew().to_dict(),
-            "kurtosis": df.kurtosis().to_dict(),
-        }
-
-        # Check for highly correlated features
-        corr_matrix = df.corr().abs()
-        upper_tri = corr_matrix.where(
-            np.triu(np.ones(corr_matrix.shape), k=1).astype(bool)
-        )
-        high_corr_pairs = [
-            (col1, col2, corr_matrix.loc[col1, col2])
-            for col1 in upper_tri.index
-            for col2 in upper_tri.columns
-            if upper_tri.loc[col1, col2] > 0.9
-        ]
-
-        analysis["high_correlations"] = high_corr_pairs
-
-        # Check for features with low variance (might not be useful for prediction)
-        low_variance_cols = [col for col in df.columns if df[col].var() < 0.01]
-        analysis["low_variance_features"] = low_variance_cols
-
-        # Top 5 features with most zeros (might be problematic)
-        zero_counts = (df == 0).sum()
-        top_zero_cols = zero_counts.sort_values(ascending=False).head(5)
-        analysis["top_zero_features"] = top_zero_cols.to_dict()
-
-        # Check for dataset balance
-        analysis["class_balance"] = "Not applicable - no target provided"
-
-        return analysis, basic_stats
-
-    # Add this to your create_feature_matrix method right after creating X and y:
-    def diagnostic_print(self, X, y, feature_columns):
-        print(f"\n--- FEATURE MATRIX DIAGNOSTICS ---")
-        print(f"Feature matrix shape: {X.shape}")
-        print(f"Number of features: {X.shape[1]}")
-        print(f"Number of samples: {X.shape[0]}")
-        print(
-            f"Class balance: {np.sum(y == 1)}/{len(y)} winners ({np.mean(y)*100:.1f}% win rate)"
-        )
-
-        # Analyze features
-        analysis, basic_stats = self.analyze_feature_matrix(X, feature_columns)
-
-        # Print key findings
-        print("\n--- KEY ISSUES DETECTED ---")
-
-        # Features with too many zeros
-        print("\nFeatures with high percentage of zeros:")
-        for feat, pct in sorted(
-            analysis["zero_percentage"].items(), key=lambda x: x[1], reverse=True
-        )[:5]:
-            if pct > 50:  # Only show if more than 50% zeros
-                print(f"  {feat}: {pct:.1f}% zeros")
-
-        # Low variance features
-        if analysis["low_variance_features"]:
-            print("\nFeatures with very low variance (might not be useful):")
-            for feat in analysis["low_variance_features"][:5]:
-                print(f"  {feat}")
-
-        # Highly correlated features
-        if analysis["high_correlations"]:
-            print("\nHighly correlated feature pairs (r > 0.9):")
-            for col1, col2, corr in analysis["high_correlations"][:5]:
-                print(f"  {col1} & {col2}: r={corr:.3f}")
-
-        # Return the analysis for further use if needed
-        return analysis, basic_stats
