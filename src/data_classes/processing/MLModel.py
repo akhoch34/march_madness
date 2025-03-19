@@ -214,6 +214,53 @@ class MarchMadnessMLModel:
             reversed_features["Team2Last10"] = game_features["Team1Last10"]
             reversed_features["Last10Diff"] = -game_features["Last10Diff"]
 
+        # Reverse exponentially weighted win percentage features
+        if "Team1ExpWinPct" in reversed_features:
+            reversed_features["Team1ExpWinPct"] = game_features["Team2ExpWinPct"]
+            reversed_features["Team2ExpWinPct"] = game_features["Team1ExpWinPct"]
+            reversed_features["ExpWinPctDiff"] = -game_features["ExpWinPctDiff"]
+
+        # Reverse momentum features
+        if "Team1Momentum" in reversed_features:
+            reversed_features["Team1Momentum"] = game_features["Team2Momentum"]
+            reversed_features["Team2Momentum"] = game_features["Team1Momentum"]
+            reversed_features["MomentumDiff"] = -game_features["MomentumDiff"]
+
+        # Reverse scoring trend features
+        if "Team1ScoringTrend" in reversed_features:
+            reversed_features["Team1ScoringTrend"] = game_features["Team2ScoringTrend"]
+            reversed_features["Team2ScoringTrend"] = game_features["Team1ScoringTrend"]
+            reversed_features["ScoringTrendDiff"] = -game_features["ScoringTrendDiff"]
+
+        # Reverse recent margin features
+        if "Team1RecentMargin" in reversed_features:
+            reversed_features["Team1RecentMargin"] = game_features["Team2RecentMargin"]
+            reversed_features["Team2RecentMargin"] = game_features["Team1RecentMargin"]
+            reversed_features["RecentMarginDiff"] = -game_features["RecentMarginDiff"]
+
+        # Reverse streak features
+        if "Team1Streak" in reversed_features:
+            reversed_features["Team1Streak"] = game_features["Team2Streak"]
+            reversed_features["Team2Streak"] = game_features["Team1Streak"]
+            reversed_features["StreakDiff"] = -game_features["StreakDiff"]
+
+        # Reverse conference tournament features
+        if "Team1ConfWinPct" in reversed_features:
+            reversed_features["Team1ConfWinPct"] = game_features["Team2ConfWinPct"]
+            reversed_features["Team2ConfWinPct"] = game_features["Team1ConfWinPct"]
+            reversed_features["ConfWinPctDiff"] = -game_features["ConfWinPctDiff"]
+
+        if "Team1ConfDepth" in reversed_features:
+            reversed_features["Team1ConfDepth"] = game_features["Team2ConfDepth"]
+            reversed_features["Team2ConfDepth"] = game_features["Team1ConfDepth"]
+            reversed_features["ConfDepthDiff"] = -game_features["ConfDepthDiff"]
+
+        # Reverse late season features
+        if "Team1LateWinPct" in reversed_features:
+            reversed_features["Team1LateWinPct"] = game_features["Team2LateWinPct"]
+            reversed_features["Team2LateWinPct"] = game_features["Team1LateWinPct"]
+            reversed_features["LateWinPctDiff"] = -game_features["LateWinPctDiff"]
+
         # Reverse ELO features if present
         if "Team1ELO" in reversed_features:
             reversed_features["Team1ELO"] = game_features["Team2ELO"]
@@ -246,6 +293,14 @@ class MarchMadnessMLModel:
                 "WinPctDiff",
                 "SOSDiff",
                 "Last10Diff",
+                "ExpWinPctDiff",
+                "MomentumDiff",
+                "ScoringTrendDiff",
+                "RecentMarginDiff",
+                "StreakDiff",
+                "ConfWinPctDiff",
+                "ConfDepthDiff",
+                "LateWinPctDiff",
             ]:
                 reversed_features[key] = -game_features[key]
 
@@ -503,12 +558,21 @@ class MarchMadnessMLModel:
         plt.show()
 
     def _get_season_stats(self, season, team1_id, team2_id):
-        """Get season performance stats for both teams"""
+        """Get season performance stats for both teams with enhanced recency metrics"""
         # Filter regular season games for this season
         season_games = self.data_manager.data["regular_season"][
             self.data_manager.data["regular_season"]["Season"] == season
         ]
 
+        # Also get tournament games (will include conference tournaments)
+        tournament_games = self.data_manager.data["tourney_results"][
+            self.data_manager.data["tourney_results"]["Season"] == season
+        ]
+
+        # Combine regular season and tournament games
+        all_games = pd.concat([season_games, tournament_games])
+
+        # --- TRADITIONAL SEASON-LONG METRICS (KEEPING EXISTING CODE) ---
         # Team1 stats
         team1_wins = season_games[season_games["WTeamID"] == team1_id].shape[0]
         team1_losses = season_games[season_games["LTeamID"] == team1_id].shape[0]
@@ -527,7 +591,226 @@ class MarchMadnessMLModel:
             else 0
         )
 
-        # Calculate strength of schedule
+        # --- ENHANCED RECENCY FEATURES ---
+
+        # Get all games for each team sorted by day
+        team1_games = pd.concat(
+            [
+                all_games[all_games["WTeamID"] == team1_id].assign(
+                    Result=1,
+                    ScoreMargin=all_games["WScore"] - all_games["LScore"],
+                    isWin=1,
+                ),
+                all_games[all_games["LTeamID"] == team1_id].assign(
+                    Result=0,
+                    ScoreMargin=all_games["LScore"] - all_games["WScore"],
+                    isWin=0,
+                ),
+            ]
+        ).sort_values(
+            "DayNum", ascending=True
+        )  # Sorting in ascending order for time series
+
+        team2_games = pd.concat(
+            [
+                all_games[all_games["WTeamID"] == team2_id].assign(
+                    Result=1,
+                    ScoreMargin=all_games["WScore"] - all_games["LScore"],
+                    isWin=1,
+                ),
+                all_games[all_games["LTeamID"] == team2_id].assign(
+                    Result=0,
+                    ScoreMargin=all_games["LScore"] - all_games["WScore"],
+                    isWin=0,
+                ),
+            ]
+        ).sort_values(
+            "DayNum", ascending=True
+        )  # Sorting in ascending order for time series
+
+        # 1. Better Last10 features (basic version already exists)
+        team1_last_10 = team1_games.tail(10) if len(team1_games) > 0 else pd.DataFrame()
+        team2_last_10 = team2_games.tail(10) if len(team2_games) > 0 else pd.DataFrame()
+
+        team1_last_10_win_pct = (
+            team1_last_10["Result"].mean() if len(team1_last_10) > 0 else team1_win_pct
+        )
+        team2_last_10_win_pct = (
+            team2_last_10["Result"].mean() if len(team2_last_10) > 0 else team2_win_pct
+        )
+
+        # 2. Exponentially weighted recent win percentage (more weight to recent games)
+        # Get the last 10 games with exponential weights (most recent games weighted more)
+        def get_exp_weighted_win_pct(team_games, window=10, halflife=3):
+            """Calculate exponentially weighted win percentage for recent games"""
+            if len(team_games) == 0:
+                return 0.0
+
+            # Take last n games
+            recent_games = team_games.tail(window)
+            if len(recent_games) == 0:
+                return 0.0
+
+            # Apply exponential weights
+            weights = np.exp(np.arange(len(recent_games)) / halflife)
+            weights = weights / weights.sum()  # Normalize weights
+
+            # Calculate weighted average
+            weighted_win_pct = (recent_games["Result"] * weights).sum()
+            return weighted_win_pct
+
+        team1_exp_win_pct = get_exp_weighted_win_pct(team1_games)
+        team2_exp_win_pct = get_exp_weighted_win_pct(team2_games)
+
+        # 3. Last 5 vs Previous 5 (momentum indicator)
+        team1_last_5_win_pct = (
+            team1_games.tail(5)["Result"].mean()
+            if len(team1_games) >= 5
+            else team1_win_pct
+        )
+        team1_prev_5_win_pct = (
+            team1_games.iloc[-10:-5]["Result"].mean()
+            if len(team1_games) >= 10
+            else team1_win_pct
+        )
+        team1_momentum = (
+            team1_last_5_win_pct - team1_prev_5_win_pct
+        )  # Positive = improving, Negative = declining
+
+        team2_last_5_win_pct = (
+            team2_games.tail(5)["Result"].mean()
+            if len(team2_games) >= 5
+            else team2_win_pct
+        )
+        team2_prev_5_win_pct = (
+            team2_games.iloc[-10:-5]["Result"].mean()
+            if len(team2_games) >= 10
+            else team2_win_pct
+        )
+        team2_momentum = team2_last_5_win_pct - team2_prev_5_win_pct
+
+        # 4. Scoring trend features (are they scoring more or less lately?)
+        def get_scoring_trend(team_games, window=5):
+            """Calculate scoring trend by comparing recent games to season average"""
+            if len(team_games) < window:
+                return 0.0
+
+            # For wins, use WScore; for losses, use LScore
+            recent_scores = []
+            for _, game in team_games.tail(window).iterrows():
+                if game["isWin"] == 1:
+                    recent_scores.append(game["WScore"] if "WScore" in game else 0)
+                else:
+                    recent_scores.append(game["LScore"] if "LScore" in game else 0)
+
+            recent_avg = np.mean(recent_scores) if recent_scores else 0
+
+            all_scores = []
+            for _, game in team_games.iterrows():
+                if game["isWin"] == 1:
+                    all_scores.append(game["WScore"] if "WScore" in game else 0)
+                else:
+                    all_scores.append(game["LScore"] if "LScore" in game else 0)
+
+            season_avg = np.mean(all_scores) if all_scores else 0
+
+            return recent_avg - season_avg  # Positive = scoring more lately
+
+        team1_scoring_trend = get_scoring_trend(team1_games)
+        team2_scoring_trend = get_scoring_trend(team2_games)
+
+        # 5. Recent margin of victory
+        team1_recent_margin = (
+            team1_games.tail(5)["ScoreMargin"].mean() if len(team1_games) >= 5 else 0
+        )
+        team2_recent_margin = (
+            team2_games.tail(5)["ScoreMargin"].mean() if len(team2_games) >= 5 else 0
+        )
+
+        # 6. Winning/losing streak
+        def get_current_streak(team_games):
+            """Calculate current winning or losing streak"""
+            if len(team_games) == 0:
+                return 0
+
+            results = team_games["isWin"].values
+
+            if len(results) == 0:
+                return 0
+
+            current_result = results[-1]
+            streak = 0
+
+            # Count consecutive same results from the end
+            for i in range(len(results) - 1, -1, -1):
+                if results[i] == current_result:
+                    if current_result == 1:
+                        streak += 1  # Winning streak (positive)
+                    else:
+                        streak -= 1  # Losing streak (negative)
+                else:
+                    break
+
+            return streak
+
+        team1_streak = get_current_streak(team1_games)
+        team2_streak = get_current_streak(team2_games)
+
+        # 7. Conference tournament specific features
+        # Based on day_num, conference tournaments are typically days 118-132
+        conf_tourney_start = 118
+
+        # Extract conference tournament games
+        team1_conf_games = team1_games[
+            (team1_games["DayNum"] >= conf_tourney_start)
+            & (team1_games["DayNum"] < 134)
+        ]
+        team2_conf_games = team2_games[
+            (team2_games["DayNum"] >= conf_tourney_start)
+            & (team2_games["DayNum"] < 134)
+        ]
+
+        team1_conf_win_pct = (
+            team1_conf_games["Result"].mean()
+            if len(team1_conf_games) > 0
+            else team1_win_pct
+        )
+        team2_conf_win_pct = (
+            team2_conf_games["Result"].mean()
+            if len(team2_conf_games) > 0
+            else team2_win_pct
+        )
+
+        # How deep did they go in conference tournament (approx by last day played)
+        team1_conf_depth = (
+            team1_conf_games["DayNum"].max() - conf_tourney_start
+            if len(team1_conf_games) > 0
+            else 0
+        )
+        team2_conf_depth = (
+            team2_conf_games["DayNum"].max() - conf_tourney_start
+            if len(team2_conf_games) > 0
+            else 0
+        )
+
+        # 8. Late season performance (February onward, ~ day 70+)
+        late_season_start = 70
+
+        team1_late_games = team1_games[team1_games["DayNum"] >= late_season_start]
+        team2_late_games = team2_games[team2_games["DayNum"] >= late_season_start]
+
+        team1_late_win_pct = (
+            team1_late_games["Result"].mean()
+            if len(team1_late_games) > 0
+            else team1_win_pct
+        )
+        team2_late_win_pct = (
+            team2_late_games["Result"].mean()
+            if len(team2_late_games) > 0
+            else team2_win_pct
+        )
+
+        # Calculate strength of schedule (keeping from original code)
         if (
             hasattr(self.stats_calculator, "advanced_team_stats")
             and self.stats_calculator.advanced_team_stats
@@ -564,45 +847,9 @@ class MarchMadnessMLModel:
             team1_sos = np.mean(team1_opp_net_eff) if team1_opp_net_eff else 0
             team2_sos = np.mean(team2_opp_net_eff) if team2_opp_net_eff else 0
 
-            # Get all games for each team sorted by day
-            team1_games = (
-                pd.concat(
-                    [
-                        season_games[season_games["WTeamID"] == team1_id].assign(
-                            Result=1
-                        ),
-                        season_games[season_games["LTeamID"] == team1_id].assign(
-                            Result=0
-                        ),
-                    ]
-                )
-                .sort_values("DayNum", ascending=False)
-                .head(10)
-            )
-
-            team2_games = (
-                pd.concat(
-                    [
-                        season_games[season_games["WTeamID"] == team2_id].assign(
-                            Result=1
-                        ),
-                        season_games[season_games["LTeamID"] == team2_id].assign(
-                            Result=0
-                        ),
-                    ]
-                )
-                .sort_values("DayNum", ascending=False)
-                .head(10)
-            )
-
-            team1_last_10_win_pct = (
-                team1_games["Result"].mean() if len(team1_games) > 0 else team1_win_pct
-            )
-            team2_last_10_win_pct = (
-                team2_games["Result"].mean() if len(team2_games) > 0 else team2_win_pct
-            )
-
+            # Build feature dictionary with original features plus new recency features
             return {
+                # Original features
                 "Team1WinPct": team1_win_pct,
                 "Team2WinPct": team2_win_pct,
                 "WinPctDiff": team1_win_pct - team2_win_pct,
@@ -612,6 +859,31 @@ class MarchMadnessMLModel:
                 "Team1Last10": team1_last_10_win_pct,
                 "Team2Last10": team2_last_10_win_pct,
                 "Last10Diff": team1_last_10_win_pct - team2_last_10_win_pct,
+                # New recency features
+                "Team1ExpWinPct": team1_exp_win_pct,
+                "Team2ExpWinPct": team2_exp_win_pct,
+                "ExpWinPctDiff": team1_exp_win_pct - team2_exp_win_pct,
+                "Team1Momentum": team1_momentum,
+                "Team2Momentum": team2_momentum,
+                "MomentumDiff": team1_momentum - team2_momentum,
+                "Team1ScoringTrend": team1_scoring_trend,
+                "Team2ScoringTrend": team2_scoring_trend,
+                "ScoringTrendDiff": team1_scoring_trend - team2_scoring_trend,
+                "Team1RecentMargin": team1_recent_margin,
+                "Team2RecentMargin": team2_recent_margin,
+                "RecentMarginDiff": team1_recent_margin - team2_recent_margin,
+                "Team1Streak": team1_streak,
+                "Team2Streak": team2_streak,
+                "StreakDiff": team1_streak - team2_streak,
+                "Team1ConfWinPct": team1_conf_win_pct,
+                "Team2ConfWinPct": team2_conf_win_pct,
+                "ConfWinPctDiff": team1_conf_win_pct - team2_conf_win_pct,
+                "Team1ConfDepth": team1_conf_depth,
+                "Team2ConfDepth": team2_conf_depth,
+                "ConfDepthDiff": team1_conf_depth - team2_conf_depth,
+                "Team1LateWinPct": team1_late_win_pct,
+                "Team2LateWinPct": team2_late_win_pct,
+                "LateWinPctDiff": team1_late_win_pct - team2_late_win_pct,
             }
         else:
             # Basic stats if advanced stats aren't available
@@ -619,6 +891,22 @@ class MarchMadnessMLModel:
                 "Team1WinPct": team1_win_pct,
                 "Team2WinPct": team2_win_pct,
                 "WinPctDiff": team1_win_pct - team2_win_pct,
+                # Include new recency features even without advanced stats
+                "Team1Last10": team1_last_10_win_pct,
+                "Team2Last10": team2_last_10_win_pct,
+                "Last10Diff": team1_last_10_win_pct - team2_last_10_win_pct,
+                "Team1ExpWinPct": team1_exp_win_pct,
+                "Team2ExpWinPct": team2_exp_win_pct,
+                "ExpWinPctDiff": team1_exp_win_pct - team2_exp_win_pct,
+                "Team1Momentum": team1_momentum,
+                "Team2Momentum": team2_momentum,
+                "MomentumDiff": team1_momentum - team2_momentum,
+                "Team1Streak": team1_streak,
+                "Team2Streak": team2_streak,
+                "StreakDiff": team1_streak - team2_streak,
+                "Team1ConfWinPct": team1_conf_win_pct,
+                "Team2ConfWinPct": team2_conf_win_pct,
+                "ConfWinPctDiff": team1_conf_win_pct - team2_conf_win_pct,
             }
 
     def _get_ranking_features(self, season, team1_id, team2_id):

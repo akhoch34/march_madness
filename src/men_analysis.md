@@ -7,11 +7,11 @@
 
 ### W02 Alabama vs W15 Robert Morris
 
-**Prediction:** Alabama has a 85.37% chance to win
+**Prediction:** Alabama has a 82.69% chance to win
 
-**ELO Ratings:** Alabama: 1819, Robert Morris: 1618
+**ELO Ratings:** Alabama: 1678, Robert Morris: 1557
 
-**Betting Odds:** Alabama -11.0, Moneyline: -584
+**Betting Odds:** Alabama -9.5, Moneyline: -478
 
 **Advanced Stats Comparison:**
 
@@ -28,17 +28,17 @@
 | Field Goal % | 48.26% | 44.91% |
 | Free Throw % | 71.63% | 72.02% |
 
-**Analysis:** Alabama (W02) is a major favorite as a much higher seed than Robert Morris (W15). Alabama has a substantially higher ELO rating (1819 vs 1618), indicating significantly better season-long performance. Historically, #2 seeds have won 93.80% of games against #15 seeds in the tournament. Alabama has a more efficient offense (118.4 vs 109.6). Alabama is the clear favorite with a 85.37% chance to win.
+**Analysis:** Alabama (W02) is a major favorite as a much higher seed than Robert Morris (W15). Alabama has a higher ELO rating (1678 vs 1557), indicating better season-long performance. Historically, #2 seeds have won 93.80% of games against #15 seeds in the tournament. Alabama has a more efficient offense (118.4 vs 109.6). Alabama is the clear favorite with a 82.69% chance to win.
 
 ---
 
 ### W03 Wisconsin vs W14 Montana
 
-**Prediction:** Wisconsin has a 78.39% chance to win
+**Prediction:** Wisconsin has a 75.54% chance to win
 
-**ELO Ratings:** Wisconsin: 1736, Montana: 1642
+**ELO Ratings:** Wisconsin: 1616, Montana: 1585
 
-**Betting Odds:** Wisconsin -8.0, Moneyline: -363
+**Betting Odds:** Wisconsin -7.0, Moneyline: -309
 
 **Advanced Stats Comparison:**
 
@@ -55,17 +55,17 @@
 | Field Goal % | 45.18% | 49.64% |
 | Free Throw % | 82.78% | 74.59% |
 
-**Analysis:** Wisconsin (W03) is a major favorite as a much higher seed than Montana (W14). Wisconsin has a higher ELO rating (1736 vs 1642), indicating better season-long performance. Historically, #3 seeds have won 85.20% of games against #14 seeds in the tournament. Wisconsin has a stronger defense, allowing 101.5 points per 100 possessions compared to 108.8 for Montana. Wisconsin is the clear favorite with a 78.39% chance to win.
+**Analysis:** Wisconsin (W03) is a major favorite as a much higher seed than Montana (W14). Historically, #3 seeds have won 85.20% of games against #14 seeds in the tournament. Wisconsin has a stronger defense, allowing 101.5 points per 100 possessions compared to 108.8 for Montana. Wisconsin is the clear favorite with a 75.54% chance to win.
 
 ---
 
 ### W04 Arizona vs W13 Akron
 
-**Prediction:** Arizona has a 70.89% chance to win
+**Prediction:** Arizona has a 71.91% chance to win
 
-**ELO Ratings:** Arizona: 1732, Akron: 1701
+**ELO Ratings:** Arizona: 1632, Akron: 1628
 
-**Betting Odds:** Arizona -5.5, Moneyline: -244
+**Betting Odds:** Arizona -5.5, Moneyline: -256
 
 **Advanced Stats Comparison:**
 
@@ -82,17 +82,17 @@
 | Field Goal % | 47.27% | 47.12% |
 | Free Throw % | 78.44% | 74.91% |
 
-**Analysis:** As a #4 seed, Arizona has a significant seeding advantage over #13 seed Akron. Historically, #4 seeds have won 79.60% of games against #13 seeds in the tournament. Akron is the better 3-point shooting team (36.63% vs 32.40%). Arizona is the clear favorite with a 70.89% chance to win.
+**Analysis:** As a #4 seed, Arizona has a significant seeding advantage over #13 seed Akron. Historically, #4 seeds have won 79.60% of games against #13 seeds in the tournament. Akron is the better 3-point shooting team (36.63% vs 32.40%). Arizona is the clear favorite with a 71.91% chance to win.
 
 ---
 
 ### W05 Oregon vs W12 Liberty
 
-**Prediction:** Oregon has a 70.71% chance to win
+**Prediction:** Oregon has a 72.01% chance to win
 
-**ELO Ratings:** Oregon: 1726, Liberty: 1694
+**ELO Ratings:** Oregon: 1628, Liberty: 1618
 
-**Betting Odds:** Oregon -5.5, Moneyline: -241
+**Betting Odds:** Oregon -6.0, Moneyline: -257
 
 **Advanced Stats Comparison:**
 
@@ -109,17 +109,17 @@
 | Field Goal % | 45.68% | 49.02% |
 | Free Throw % | 76.32% | 65.38% |
 
-**Analysis:** As a #5 seed, Oregon has a significant seeding advantage over #12 seed Liberty. Historically, #5 seeds have won 64.90% of games against #12 seeds in the tournament. Although Liberty has a better defensive efficiency (95.8 vs 101.6), other factors favor Oregon. Liberty is the better 3-point shooting team (39.53% vs 34.00%). Oregon is the clear favorite with a 70.71% chance to win.
+**Analysis:** As a #5 seed, Oregon has a significant seeding advantage over #12 seed Liberty. Historically, #5 seeds have won 64.90% of games against #12 seeds in the tournament. Although Liberty has a better defensive efficiency (95.8 vs 101.6), other factors favor Oregon. Liberty is the better 3-point shooting team (39.53% vs 34.00%). Oregon is the clear favorite with a 72.01% chance to win.
 
 ---
 
 ### W06 BYU vs W11 VCU
 
-**Prediction:** BYU has a 55.36% chance to win
+**Prediction:** BYU has a 57.96% chance to win
 
-**ELO Ratings:** BYU: 1748, VCU: 1755
+**ELO Ratings:** BYU: 1626, VCU: 1645
 
-**Betting Odds:** BYU -1.5, Moneyline: -124
+**Betting Odds:** BYU -2.0, Moneyline: -138
 
 **Advanced Stats Comparison:**
 
@@ -136,17 +136,17 @@
 | Field Goal % | 48.22% | 44.40% |
 | Free Throw % | 70.54% | 74.48% |
 
-**Analysis:** As a #6 seed, BYU has a significant seeding advantage over #11 seed VCU. Historically, #6 seeds have won 62.30% of games against #11 seeds in the tournament. Although VCU has a better defensive efficiency (93.1 vs 102.0), other factors favor BYU. BYU has a significant advantage in 3-point shooting (37.08% vs 33.55%). This is expected to be a close matchup, with BYU having a slight edge (55.36% win probability).
+**Analysis:** As a #6 seed, BYU has a significant seeding advantage over #11 seed VCU. Historically, #6 seeds have won 62.30% of games against #11 seeds in the tournament. Although VCU has a better defensive efficiency (93.1 vs 102.0), other factors favor BYU. BYU has a significant advantage in 3-point shooting (37.08% vs 33.55%). This is expected to be a close matchup, with BYU having a slight edge (57.96% win probability).
 
 ---
 
 ### W07 St Mary's CA vs W10 Vanderbilt
 
-**Prediction:** St Mary's CA has a 78.57% chance to win
+**Prediction:** St Mary's CA has a 77.62% chance to win
 
-**ELO Ratings:** St Mary's CA: 1778, Vanderbilt: 1601
+**ELO Ratings:** St Mary's CA: 1641, Vanderbilt: 1515
 
-**Betting Odds:** St Mary's CA -8.0, Moneyline: -367
+**Betting Odds:** St Mary's CA -7.5, Moneyline: -347
 
 **Advanced Stats Comparison:**
 
@@ -163,17 +163,17 @@
 | Field Goal % | 45.42% | 45.12% |
 | Free Throw % | 69.51% | 74.74% |
 
-**Analysis:** St Mary's CA has a slight edge as a #7 seed versus #10 seed Vanderbilt. St Mary's CA has a higher ELO rating (1778 vs 1601), indicating better season-long performance. Historically, #7 seeds have won 60.90% of games against #10 seeds in the tournament. St Mary's CA has a stronger defense, allowing 94.8 points per 100 possessions compared to 105.9 for Vanderbilt. St Mary's CA is the clear favorite with a 78.57% chance to win.
+**Analysis:** St Mary's CA has a slight edge as a #7 seed versus #10 seed Vanderbilt. St Mary's CA has a higher ELO rating (1641 vs 1515), indicating better season-long performance. Historically, #7 seeds have won 60.90% of games against #10 seeds in the tournament. St Mary's CA has a stronger defense, allowing 94.8 points per 100 possessions compared to 105.9 for Vanderbilt. St Mary's CA is the clear favorite with a 77.62% chance to win.
 
 ---
 
 ### W08 Mississippi St vs W09 Baylor
 
-**Prediction:** Mississippi St has a 48.48% chance to win
+**Prediction:** Mississippi St has a 49.79% chance to win
 
-**ELO Ratings:** Mississippi St: 1641, Baylor: 1645
+**ELO Ratings:** Mississippi St: 1550, Baylor: 1574
 
-**Betting Odds:** Mississippi St +0.5, Moneyline: 106
+**Betting Odds:** Mississippi St PK, Moneyline: 101
 
 **Advanced Stats Comparison:**
 
@@ -190,17 +190,17 @@
 | Field Goal % | 45.11% | 44.57% |
 | Free Throw % | 69.98% | 74.58% |
 
-**Analysis:** Despite being a lower #9 seed, Baylor is favored over #8 seed Mississippi St. Baylor has a significant advantage in 3-point shooting (34.68% vs 31.38%). This is expected to be a close matchup, with Baylor having a slight edge (51.52% win probability).
+**Analysis:** Despite being a lower #9 seed, Baylor is favored over #8 seed Mississippi St. Baylor has a significant advantage in 3-point shooting (34.68% vs 31.38%). This is expected to be a close matchup, with Baylor having a slight edge (50.21% win probability).
 
 ---
 
 ### X01 Houston vs X16 SIUE
 
-**Prediction:** Houston has a 94.12% chance to win
+**Prediction:** Houston has a 94.08% chance to win
 
-**ELO Ratings:** Houston: 1901, SIUE: 1521
+**ELO Ratings:** Houston: 1741, SIUE: 1523
 
-**Betting Odds:** Houston -21.0, Moneyline: -1599
+**Betting Odds:** Houston -20.5, Moneyline: -1588
 
 **Advanced Stats Comparison:**
 
@@ -217,17 +217,17 @@
 | Field Goal % | 45.82% | 42.78% |
 | Free Throw % | 74.07% | 67.87% |
 
-**Analysis:** Houston (X01) is a major favorite as a much higher seed than SIUE (X16). Houston has a substantially higher ELO rating (1901 vs 1521), indicating significantly better season-long performance. Historically, #1 seeds have won 98.70% of games against #16 seeds in the tournament. Houston has a more efficient offense (115.8 vs 103.1). Houston has a stronger defense, allowing 90.9 points per 100 possessions compared to 99.8 for SIUE. Houston has a significant advantage in 3-point shooting (39.77% vs 34.01%). Houston is strongly favored with a 94.12% win probability.
+**Analysis:** Houston (X01) is a major favorite as a much higher seed than SIUE (X16). Houston has a substantially higher ELO rating (1741 vs 1523), indicating significantly better season-long performance. Historically, #1 seeds have won 98.70% of games against #16 seeds in the tournament. Houston has a more efficient offense (115.8 vs 103.1). Houston has a stronger defense, allowing 90.9 points per 100 possessions compared to 99.8 for SIUE. Houston has a significant advantage in 3-point shooting (39.77% vs 34.01%). Houston is strongly favored with a 94.08% win probability.
 
 ---
 
 ### X02 Tennessee vs X15 Wofford
 
-**Prediction:** Tennessee has a 90.75% chance to win
+**Prediction:** Tennessee has a 90.44% chance to win
 
-**ELO Ratings:** Tennessee: 1827, Wofford: 1548
+**ELO Ratings:** Tennessee: 1702, Wofford: 1531
 
-**Betting Odds:** Tennessee -16.0, Moneyline: -982
+**Betting Odds:** Tennessee -15.5, Moneyline: -946
 
 **Advanced Stats Comparison:**
 
@@ -244,17 +244,17 @@
 | Field Goal % | 45.48% | 45.04% |
 | Free Throw % | 74.34% | 66.84% |
 
-**Analysis:** Tennessee (X02) is a major favorite as a much higher seed than Wofford (X15). Tennessee has a substantially higher ELO rating (1827 vs 1548), indicating significantly better season-long performance. Historically, #2 seeds have won 93.80% of games against #15 seeds in the tournament. Tennessee has a stronger defense, allowing 94.6 points per 100 possessions compared to 107.9 for Wofford. Tennessee is strongly favored with a 90.75% win probability.
+**Analysis:** Tennessee (X02) is a major favorite as a much higher seed than Wofford (X15). Tennessee has a higher ELO rating (1702 vs 1531), indicating better season-long performance. Historically, #2 seeds have won 93.80% of games against #15 seeds in the tournament. Tennessee has a stronger defense, allowing 94.6 points per 100 possessions compared to 107.9 for Wofford. Tennessee is strongly favored with a 90.44% win probability.
 
 ---
 
 ### X03 Kentucky vs X14 Troy
 
-**Prediction:** Kentucky has a 74.58% chance to win
+**Prediction:** Kentucky has a 72.85% chance to win
 
-**ELO Ratings:** Kentucky: 1726, Troy: 1623
+**ELO Ratings:** Kentucky: 1629, Troy: 1582
 
-**Betting Odds:** Kentucky -6.5, Moneyline: -293
+**Betting Odds:** Kentucky -6.0, Moneyline: -268
 
 **Advanced Stats Comparison:**
 
@@ -271,17 +271,17 @@
 | Field Goal % | 48.20% | 43.30% |
 | Free Throw % | 73.80% | 72.63% |
 
-**Analysis:** Kentucky (X03) is a major favorite as a much higher seed than Troy (X14). Kentucky has a higher ELO rating (1726 vs 1623), indicating better season-long performance. Historically, #3 seeds have won 85.20% of games against #14 seeds in the tournament. Kentucky has a more efficient offense (116.5 vs 108.5). Although Troy has a better defensive efficiency (97.7 vs 106.3), other factors favor Kentucky. Kentucky has a significant advantage in 3-point shooting (37.38% vs 30.29%). Kentucky is the clear favorite with a 74.58% chance to win.
+**Analysis:** Kentucky (X03) is a major favorite as a much higher seed than Troy (X14). Historically, #3 seeds have won 85.20% of games against #14 seeds in the tournament. Kentucky has a more efficient offense (116.5 vs 108.5). Although Troy has a better defensive efficiency (97.7 vs 106.3), other factors favor Kentucky. Kentucky has a significant advantage in 3-point shooting (37.38% vs 30.29%). Kentucky is the clear favorite with a 72.85% chance to win.
 
 ---
 
 ### X04 Purdue vs X13 High Point
 
-**Prediction:** Purdue has a 67.27% chance to win
+**Prediction:** Purdue has a 73.59% chance to win
 
-**ELO Ratings:** Purdue: 1735, High Point: 1702
+**ELO Ratings:** Purdue: 1657, High Point: 1615
 
-**Betting Odds:** Purdue -4.5, Moneyline: -206
+**Betting Odds:** Purdue -6.5, Moneyline: -279
 
 **Advanced Stats Comparison:**
 
@@ -298,17 +298,17 @@
 | Field Goal % | 49.01% | 49.27% |
 | Free Throw % | 73.02% | 76.40% |
 
-**Analysis:** As a #4 seed, Purdue has a significant seeding advantage over #13 seed High Point. Historically, #4 seeds have won 79.60% of games against #13 seeds in the tournament. Purdue has the advantage with a 67.27% win probability.
+**Analysis:** As a #4 seed, Purdue has a significant seeding advantage over #13 seed High Point. Historically, #4 seeds have won 79.60% of games against #13 seeds in the tournament. Purdue is the clear favorite with a 73.59% chance to win.
 
 ---
 
 ### X05 Clemson vs X12 McNeese St
 
-**Prediction:** Clemson has a 74.66% chance to win
+**Prediction:** Clemson has a 72.46% chance to win
 
-**ELO Ratings:** Clemson: 1768, McNeese St: 1705
+**ELO Ratings:** Clemson: 1643, McNeese St: 1618
 
-**Betting Odds:** Clemson -6.5, Moneyline: -295
+**Betting Odds:** Clemson -6.0, Moneyline: -263
 
 **Advanced Stats Comparison:**
 
@@ -325,17 +325,17 @@
 | Field Goal % | 46.50% | 46.73% |
 | Free Throw % | 76.59% | 70.73% |
 
-**Analysis:** As a #5 seed, Clemson has a significant seeding advantage over #12 seed McNeese St. Clemson has a higher ELO rating (1768 vs 1705), indicating better season-long performance. Historically, #5 seeds have won 64.90% of games against #12 seeds in the tournament. Clemson is the clear favorite with a 74.66% chance to win.
+**Analysis:** As a #5 seed, Clemson has a significant seeding advantage over #12 seed McNeese St. Historically, #5 seeds have won 64.90% of games against #12 seeds in the tournament. Clemson is the clear favorite with a 72.46% chance to win.
 
 ---
 
 ### X07 UCLA vs X10 Utah St
 
-**Prediction:** UCLA has a 45.10% chance to win
+**Prediction:** UCLA has a 52.60% chance to win
 
-**ELO Ratings:** UCLA: 1667, Utah St: 1726
+**ELO Ratings:** UCLA: 1575, Utah St: 1613
 
-**Betting Odds:** UCLA +1.0, Moneyline: 122
+**Betting Odds:** UCLA -0.5, Moneyline: -111
 
 **Advanced Stats Comparison:**
 
@@ -352,17 +352,17 @@
 | Field Goal % | 46.63% | 48.43% |
 | Free Throw % | 70.33% | 70.17% |
 
-**Analysis:** Despite being a lower #10 seed, Utah St is favored over #7 seed UCLA. Utah St has a higher ELO rating (1726 vs 1667), indicating better season-long performance. Although UCLA has a better defensive efficiency (99.1 vs 104.4), other factors favor Utah St. This is expected to be a close matchup, with Utah St having a slight edge (54.90% win probability).
+**Analysis:** UCLA has a slight edge as a #7 seed versus #10 seed Utah St. Historically, #7 seeds have won 60.90% of games against #10 seeds in the tournament. UCLA has a stronger defense, allowing 99.1 points per 100 possessions compared to 104.4 for Utah St. This is expected to be a close matchup, with UCLA having a slight edge (52.60% win probability).
 
 ---
 
 ### X08 Gonzaga vs X09 Georgia
 
-**Prediction:** Gonzaga has a 70.80% chance to win
+**Prediction:** Gonzaga has a 76.70% chance to win
 
-**ELO Ratings:** Gonzaga: 1781, Georgia: 1632
+**ELO Ratings:** Gonzaga: 1696, Georgia: 1558
 
-**Betting Odds:** Gonzaga -5.5, Moneyline: -242
+**Betting Odds:** Gonzaga -7.5, Moneyline: -329
 
 **Advanced Stats Comparison:**
 
@@ -379,17 +379,17 @@
 | Field Goal % | 49.95% | 46.35% |
 | Free Throw % | 80.09% | 71.71% |
 
-**Analysis:** Gonzaga has a slight edge as a #8 seed versus #9 seed Georgia. Gonzaga has a higher ELO rating (1781 vs 1632), indicating better season-long performance. Historically, #8 seeds have won 51.40% of games against #9 seeds in the tournament. Gonzaga has a more efficient offense (120.1 vs 109.6). Gonzaga is the clear favorite with a 70.80% chance to win.
+**Analysis:** Gonzaga has a slight edge as a #8 seed versus #9 seed Georgia. Gonzaga has a higher ELO rating (1696 vs 1558), indicating better season-long performance. Historically, #8 seeds have won 51.40% of games against #9 seeds in the tournament. Gonzaga has a more efficient offense (120.1 vs 109.6). Gonzaga is the clear favorite with a 76.70% chance to win.
 
 ---
 
 ### Y02 Michigan St vs Y15 Bryant
 
-**Prediction:** Michigan St has a 86.00% chance to win
+**Prediction:** Michigan St has a 79.50% chance to win
 
-**ELO Ratings:** Michigan St: 1789, Bryant: 1608
+**ELO Ratings:** Michigan St: 1639, Bryant: 1574
 
-**Betting Odds:** Michigan St -11.5, Moneyline: -615
+**Betting Odds:** Michigan St -8.5, Moneyline: -388
 
 **Advanced Stats Comparison:**
 
@@ -406,17 +406,17 @@
 | Field Goal % | 46.11% | 45.18% |
 | Free Throw % | 78.11% | 71.84% |
 
-**Analysis:** Michigan St (Y02) is a major favorite as a much higher seed than Bryant (Y15). Michigan St has a higher ELO rating (1789 vs 1608), indicating better season-long performance. Historically, #2 seeds have won 93.80% of games against #15 seeds in the tournament. Michigan St is the clear favorite with a 86.00% chance to win.
+**Analysis:** Michigan St (Y02) is a major favorite as a much higher seed than Bryant (Y15). Michigan St has a higher ELO rating (1639 vs 1574), indicating better season-long performance. Historically, #2 seeds have won 93.80% of games against #15 seeds in the tournament. Michigan St is the clear favorite with a 79.50% chance to win.
 
 ---
 
 ### Y03 Iowa St vs Y14 Lipscomb
 
-**Prediction:** Iowa St has a 78.99% chance to win
+**Prediction:** Iowa St has a 75.52% chance to win
 
-**ELO Ratings:** Iowa St: 1735, Lipscomb: 1620
+**ELO Ratings:** Iowa St: 1620, Lipscomb: 1574
 
-**Betting Odds:** Iowa St -8.0, Moneyline: -376
+**Betting Odds:** Iowa St -7.0, Moneyline: -309
 
 **Advanced Stats Comparison:**
 
@@ -433,17 +433,17 @@
 | Field Goal % | 47.97% | 47.22% |
 | Free Throw % | 75.75% | 79.65% |
 
-**Analysis:** Iowa St (Y03) is a major favorite as a much higher seed than Lipscomb (Y14). Iowa St has a higher ELO rating (1735 vs 1620), indicating better season-long performance. Historically, #3 seeds have won 85.20% of games against #14 seeds in the tournament. Iowa St is the clear favorite with a 78.99% chance to win.
+**Analysis:** Iowa St (Y03) is a major favorite as a much higher seed than Lipscomb (Y14). Historically, #3 seeds have won 85.20% of games against #14 seeds in the tournament. Iowa St is the clear favorite with a 75.52% chance to win.
 
 ---
 
 ### Y04 Texas A&M vs Y13 Yale
 
-**Prediction:** Texas A&M has a 63.17% chance to win
+**Prediction:** Texas A&M has a 64.10% chance to win
 
-**ELO Ratings:** Texas A&M: 1702, Yale: 1713
+**ELO Ratings:** Texas A&M: 1586, Yale: 1621
 
-**Betting Odds:** Texas A&M -3.5, Moneyline: -172
+**Betting Odds:** Texas A&M -3.5, Moneyline: -179
 
 **Advanced Stats Comparison:**
 
@@ -460,17 +460,17 @@
 | Field Goal % | 41.64% | 48.59% |
 | Free Throw % | 69.50% | 73.63% |
 
-**Analysis:** As a #4 seed, Texas A&M has a significant seeding advantage over #13 seed Yale. Historically, #4 seeds have won 79.60% of games against #13 seeds in the tournament. While Yale actually has a more efficient offense (116.4 vs 107.5), other factors favor Texas A&M. Yale is the better 3-point shooting team (38.46% vs 31.07%). Texas A&M has the advantage with a 63.17% win probability.
+**Analysis:** As a #4 seed, Texas A&M has a significant seeding advantage over #13 seed Yale. Historically, #4 seeds have won 79.60% of games against #13 seeds in the tournament. While Yale actually has a more efficient offense (116.4 vs 107.5), other factors favor Texas A&M. Yale is the better 3-point shooting team (38.46% vs 31.07%). Texas A&M has the advantage with a 64.10% win probability.
 
 ---
 
 ### Y05 Michigan vs Y12 UC San Diego
 
-**Prediction:** Michigan has a 60.52% chance to win
+**Prediction:** Michigan has a 63.44% chance to win
 
-**ELO Ratings:** Michigan: 1713, UC San Diego: 1753
+**ELO Ratings:** Michigan: 1590, UC San Diego: 1632
 
-**Betting Odds:** Michigan -2.5, Moneyline: -153
+**Betting Odds:** Michigan -3.5, Moneyline: -174
 
 **Advanced Stats Comparison:**
 
@@ -487,17 +487,17 @@
 | Field Goal % | 47.40% | 46.37% |
 | Free Throw % | 72.83% | 74.64% |
 
-**Analysis:** As a #5 seed, Michigan has a significant seeding advantage over #12 seed UC San Diego. Historically, #5 seeds have won 64.90% of games against #12 seeds in the tournament. While UC San Diego actually has a more efficient offense (115.9 vs 109.1), other factors favor Michigan. Although UC San Diego has a better defensive efficiency (92.6 vs 99.1), other factors favor Michigan. UC San Diego is the better 3-point shooting team (36.52% vs 33.41%). Michigan has the advantage with a 60.52% win probability.
+**Analysis:** As a #5 seed, Michigan has a significant seeding advantage over #12 seed UC San Diego. Historically, #5 seeds have won 64.90% of games against #12 seeds in the tournament. While UC San Diego actually has a more efficient offense (115.9 vs 109.1), other factors favor Michigan. Although UC San Diego has a better defensive efficiency (92.6 vs 99.1), other factors favor Michigan. UC San Diego is the better 3-point shooting team (36.52% vs 33.41%). Michigan has the advantage with a 63.44% win probability.
 
 ---
 
 ### Y07 Marquette vs Y10 New Mexico
 
-**Prediction:** Marquette has a 57.69% chance to win
+**Prediction:** Marquette has a 66.73% chance to win
 
-**ELO Ratings:** Marquette: 1716, New Mexico: 1718
+**ELO Ratings:** Marquette: 1641, New Mexico: 1602
 
-**Betting Odds:** Marquette -2.0, Moneyline: -136
+**Betting Odds:** Marquette -4.5, Moneyline: -201
 
 **Advanced Stats Comparison:**
 
@@ -514,17 +514,17 @@
 | Field Goal % | 44.55% | 45.30% |
 | Free Throw % | 72.30% | 68.38% |
 
-**Analysis:** Marquette has a slight edge as a #7 seed versus #10 seed New Mexico. Historically, #7 seeds have won 60.90% of games against #10 seeds in the tournament. This is expected to be a close matchup, with Marquette having a slight edge (57.69% win probability).
+**Analysis:** Marquette has a slight edge as a #7 seed versus #10 seed New Mexico. Historically, #7 seeds have won 60.90% of games against #10 seeds in the tournament. Marquette has the advantage with a 66.73% win probability.
 
 ---
 
 ### Y08 Louisville vs Y09 Creighton
 
-**Prediction:** Louisville has a 46.72% chance to win
+**Prediction:** Louisville has a 48.96% chance to win
 
-**ELO Ratings:** Louisville: 1714, Creighton: 1722
+**ELO Ratings:** Louisville: 1588, Creighton: 1623
 
-**Betting Odds:** Louisville +1.0, Moneyline: 114
+**Betting Odds:** Louisville +0.5, Moneyline: 104
 
 **Advanced Stats Comparison:**
 
@@ -541,17 +541,17 @@
 | Field Goal % | 45.44% | 47.46% |
 | Free Throw % | 74.43% | 73.27% |
 
-**Analysis:** Despite being a lower #9 seed, Creighton is favored over #8 seed Louisville. This is expected to be a close matchup, with Creighton having a slight edge (53.28% win probability).
+**Analysis:** Despite being a lower #9 seed, Creighton is favored over #8 seed Louisville. This is expected to be a close matchup, with Creighton having a slight edge (51.04% win probability).
 
 ---
 
 ### Z01 Florida vs Z16 Norfolk St
 
-**Prediction:** Florida has a 88.64% chance to win
+**Prediction:** Florida has a 86.70% chance to win
 
-**ELO Ratings:** Florida: 1864, Norfolk St: 1592
+**ELO Ratings:** Florida: 1701, Norfolk St: 1576
 
-**Betting Odds:** Florida -13.5, Moneyline: -780
+**Betting Odds:** Florida -12.0, Moneyline: -652
 
 **Advanced Stats Comparison:**
 
@@ -568,17 +568,17 @@
 | Field Goal % | 47.27% | 48.06% |
 | Free Throw % | 71.79% | 75.26% |
 
-**Analysis:** Florida (Z01) is a major favorite as a much higher seed than Norfolk St (Z16). Florida has a substantially higher ELO rating (1864 vs 1592), indicating significantly better season-long performance. Historically, #1 seeds have won 98.70% of games against #16 seeds in the tournament. Florida has a more efficient offense (120.2 vs 108.7). Florida has a stronger defense, allowing 97.0 points per 100 possessions compared to 105.2 for Norfolk St. Florida has a significant advantage in 3-point shooting (35.51% vs 31.25%). Florida is the clear favorite with a 88.64% chance to win.
+**Analysis:** Florida (Z01) is a major favorite as a much higher seed than Norfolk St (Z16). Florida has a higher ELO rating (1701 vs 1576), indicating better season-long performance. Historically, #1 seeds have won 98.70% of games against #16 seeds in the tournament. Florida has a more efficient offense (120.2 vs 108.7). Florida has a stronger defense, allowing 97.0 points per 100 possessions compared to 105.2 for Norfolk St. Florida has a significant advantage in 3-point shooting (35.51% vs 31.25%). Florida is the clear favorite with a 86.70% chance to win.
 
 ---
 
 ### Z02 St John's vs Z15 NE Omaha
 
-**Prediction:** St John's has a 86.48% chance to win
+**Prediction:** St John's has a 87.01% chance to win
 
-**ELO Ratings:** St John's: 1819, NE Omaha: 1571
+**ELO Ratings:** St John's: 1675, NE Omaha: 1534
 
-**Betting Odds:** St John's -12.0, Moneyline: -640
+**Betting Odds:** St John's -12.0, Moneyline: -670
 
 **Advanced Stats Comparison:**
 
@@ -595,17 +595,17 @@
 | Field Goal % | 45.08% | 46.40% |
 | Free Throw % | 68.90% | 73.26% |
 
-**Analysis:** St John's (Z02) is a major favorite as a much higher seed than NE Omaha (Z15). St John's has a substantially higher ELO rating (1819 vs 1571), indicating significantly better season-long performance. Historically, #2 seeds have won 93.80% of games against #15 seeds in the tournament. St John's has a stronger defense, allowing 91.8 points per 100 possessions compared to 109.2 for NE Omaha. NE Omaha is the better 3-point shooting team (36.72% vs 30.37%). St John's is the clear favorite with a 86.48% chance to win.
+**Analysis:** St John's (Z02) is a major favorite as a much higher seed than NE Omaha (Z15). St John's has a higher ELO rating (1675 vs 1534), indicating better season-long performance. Historically, #2 seeds have won 93.80% of games against #15 seeds in the tournament. St John's has a stronger defense, allowing 91.8 points per 100 possessions compared to 109.2 for NE Omaha. NE Omaha is the better 3-point shooting team (36.72% vs 30.37%). St John's is the clear favorite with a 87.01% chance to win.
 
 ---
 
 ### Z03 Texas Tech vs Z14 UNC Wilmington
 
-**Prediction:** Texas Tech has a 73.28% chance to win
+**Prediction:** Texas Tech has a 68.74% chance to win
 
-**ELO Ratings:** Texas Tech: 1735, UNC Wilmington: 1679
+**ELO Ratings:** Texas Tech: 1614, UNC Wilmington: 1614
 
-**Betting Odds:** Texas Tech -6.0, Moneyline: -274
+**Betting Odds:** Texas Tech -5.0, Moneyline: -220
 
 **Advanced Stats Comparison:**
 
@@ -622,17 +622,17 @@
 | Field Goal % | 47.00% | 46.27% |
 | Free Throw % | 76.43% | 75.25% |
 
-**Analysis:** Texas Tech (Z03) is a major favorite as a much higher seed than UNC Wilmington (Z14). Texas Tech has a higher ELO rating (1735 vs 1679), indicating better season-long performance. Historically, #3 seeds have won 85.20% of games against #14 seeds in the tournament. Texas Tech has a significant advantage in 3-point shooting (37.89% vs 33.03%). Texas Tech is the clear favorite with a 73.28% chance to win.
+**Analysis:** Texas Tech (Z03) is a major favorite as a much higher seed than UNC Wilmington (Z14). Historically, #3 seeds have won 85.20% of games against #14 seeds in the tournament. Texas Tech has a significant advantage in 3-point shooting (37.89% vs 33.03%). Texas Tech has the advantage with a 68.74% win probability.
 
 ---
 
 ### Z04 Maryland vs Z13 Grand Canyon
 
-**Prediction:** Maryland has a 64.89% chance to win
+**Prediction:** Maryland has a 62.14% chance to win
 
-**ELO Ratings:** Maryland: 1707, Grand Canyon: 1703
+**ELO Ratings:** Maryland: 1591, Grand Canyon: 1632
 
-**Betting Odds:** Maryland -4.0, Moneyline: -185
+**Betting Odds:** Maryland -3.0, Moneyline: -164
 
 **Advanced Stats Comparison:**
 
@@ -649,17 +649,17 @@
 | Field Goal % | 47.17% | 45.92% |
 | Free Throw % | 75.52% | 73.50% |
 
-**Analysis:** As a #4 seed, Maryland has a significant seeding advantage over #13 seed Grand Canyon. Historically, #4 seeds have won 79.60% of games against #13 seeds in the tournament. Maryland has a more efficient offense (114.3 vs 108.1). Maryland has a significant advantage in 3-point shooting (37.21% vs 31.63%). Maryland has the advantage with a 64.89% win probability.
+**Analysis:** As a #4 seed, Maryland has a significant seeding advantage over #13 seed Grand Canyon. Historically, #4 seeds have won 79.60% of games against #13 seeds in the tournament. Maryland has a more efficient offense (114.3 vs 108.1). Maryland has a significant advantage in 3-point shooting (37.21% vs 31.63%). Maryland has the advantage with a 62.14% win probability.
 
 ---
 
 ### Z05 Memphis vs Z12 Colorado St
 
-**Prediction:** Memphis has a 70.38% chance to win
+**Prediction:** Memphis has a 74.56% chance to win
 
-**ELO Ratings:** Memphis: 1784, Colorado St: 1742
+**ELO Ratings:** Memphis: 1672, Colorado St: 1638
 
-**Betting Odds:** Memphis -5.5, Moneyline: -238
+**Betting Odds:** Memphis -6.5, Moneyline: -293
 
 **Advanced Stats Comparison:**
 
@@ -676,17 +676,17 @@
 | Field Goal % | 47.35% | 47.98% |
 | Free Throw % | 70.23% | 77.52% |
 
-**Analysis:** As a #5 seed, Memphis has a significant seeding advantage over #12 seed Colorado St. Historically, #5 seeds have won 64.90% of games against #12 seeds in the tournament. Memphis is the clear favorite with a 70.38% chance to win.
+**Analysis:** As a #5 seed, Memphis has a significant seeding advantage over #12 seed Colorado St. Historically, #5 seeds have won 64.90% of games against #12 seeds in the tournament. Memphis is the clear favorite with a 74.56% chance to win.
 
 ---
 
 ### Z06 Missouri vs Z11 Drake
 
-**Prediction:** Missouri has a 29.65% chance to win
+**Prediction:** Missouri has a 39.06% chance to win
 
-**ELO Ratings:** Missouri: 1617, Drake: 1794
+**ELO Ratings:** Missouri: 1528, Drake: 1666
 
-**Betting Odds:** Missouri +5.5, Moneyline: 237
+**Betting Odds:** Missouri +2.5, Moneyline: 156
 
 **Advanced Stats Comparison:**
 
@@ -703,17 +703,17 @@
 | Field Goal % | 48.53% | 47.38% |
 | Free Throw % | 72.53% | 70.74% |
 
-**Analysis:** Despite being a lower #11 seed, Drake is favored over #6 seed Missouri. Drake has a higher ELO rating (1794 vs 1617), indicating better season-long performance. Drake has a stronger defense, allowing 98.7 points per 100 possessions compared to 104.5 for Missouri. Drake is the clear favorite with a 70.35% chance to win.
+**Analysis:** Despite being a lower #11 seed, Drake is favored over #6 seed Missouri. Drake has a higher ELO rating (1666 vs 1528), indicating better season-long performance. Drake has a stronger defense, allowing 98.7 points per 100 possessions compared to 104.5 for Missouri. Drake has the advantage with a 60.94% win probability.
 
 ---
 
 ### Z07 Kansas vs Z10 Arkansas
 
-**Prediction:** Kansas has a 66.38% chance to win
+**Prediction:** Kansas has a 71.59% chance to win
 
-**ELO Ratings:** Kansas: 1689, Arkansas: 1630
+**ELO Ratings:** Kansas: 1634, Arkansas: 1561
 
-**Betting Odds:** Kansas -4.0, Moneyline: -197
+**Betting Odds:** Kansas -5.5, Moneyline: -252
 
 **Advanced Stats Comparison:**
 
@@ -730,17 +730,17 @@
 | Field Goal % | 47.13% | 46.62% |
 | Free Throw % | 71.11% | 73.35% |
 
-**Analysis:** Kansas has a slight edge as a #7 seed versus #10 seed Arkansas. Kansas has a higher ELO rating (1689 vs 1630), indicating better season-long performance. Historically, #7 seeds have won 60.90% of games against #10 seeds in the tournament. Kansas has the advantage with a 66.38% win probability.
+**Analysis:** Kansas has a slight edge as a #7 seed versus #10 seed Arkansas. Kansas has a higher ELO rating (1634 vs 1561), indicating better season-long performance. Historically, #7 seeds have won 60.90% of games against #10 seeds in the tournament. Kansas is the clear favorite with a 71.59% chance to win.
 
 ---
 
 ### Z08 Connecticut vs Z09 Oklahoma
 
-**Prediction:** Connecticut has a 71.48% chance to win
+**Prediction:** Connecticut has a 73.97% chance to win
 
-**ELO Ratings:** Connecticut: 1757, Oklahoma: 1619
+**ELO Ratings:** Connecticut: 1671, Oklahoma: 1559
 
-**Betting Odds:** Connecticut -5.5, Moneyline: -251
+**Betting Odds:** Connecticut -6.5, Moneyline: -284
 
 **Advanced Stats Comparison:**
 
@@ -757,7 +757,7 @@
 | Field Goal % | 47.99% | 47.20% |
 | Free Throw % | 79.07% | 79.42% |
 
-**Analysis:** Connecticut has a slight edge as a #8 seed versus #9 seed Oklahoma. Connecticut has a higher ELO rating (1757 vs 1619), indicating better season-long performance. Historically, #8 seeds have won 51.40% of games against #9 seeds in the tournament. Connecticut has a more efficient offense (118.6 vs 113.0). Connecticut is the clear favorite with a 71.48% chance to win.
+**Analysis:** Connecticut has a slight edge as a #8 seed versus #9 seed Oklahoma. Connecticut has a higher ELO rating (1671 vs 1559), indicating better season-long performance. Historically, #8 seeds have won 51.40% of games against #9 seeds in the tournament. Connecticut has a more efficient offense (118.6 vs 113.0). Connecticut is the clear favorite with a 73.97% chance to win.
 
 ---
 

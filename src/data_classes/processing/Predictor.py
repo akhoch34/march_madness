@@ -538,69 +538,74 @@ class MarchMadnessPredictor:
         k_factors = [10, 15, 20, 22, 25, 28, 30, 35, 40]
         recency_factors = [1.0, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3]
         recency_windows = [10, 15, 20, 25, 30]
+        carry_over_factors = [0.3, 0.4, 0.5, 0.6, 0.7]
 
         results = []
         best_log_loss = float("inf")
         best_params = None
 
         # Total combinations to test
-        total_combos = len(k_factors) * len(recency_factors) * len(recency_windows)
+        total_combos = (
+            len(k_factors)
+            * len(recency_factors)
+            * len(recency_windows)
+            * len(carry_over_factors)
+        )
         combo_count = 0
 
         for k in k_factors:
             for rf in recency_factors:
                 for rw in recency_windows:
-                    combo_count += 1
-                    print(
-                        f"\nTesting combination {combo_count}/{total_combos}: k={k}, recency_factor={rf}, recency_window={rw}"
-                    )
-
-                    # Recalculate ELO ratings with these parameters
-                    self.elo_system.calculate_elo_ratings(
-                        start_year=2003,
-                        k_factor=k,
-                        recency_factor=rf,
-                        recency_window=rw,
-                    )
-
-                    # Run backtests for each season
-                    season_results = []
-                    for season in test_seasons:
-                        result = self.backtest_tournament(
-                            season, method="elo", visualize=False
+                    for co in carry_over_factors:
+                        combo_count += 1
+                        print(
+                            f"\nTesting combination {combo_count}/{total_combos}: k={k}, recency_factor={rf}, recency_window={rw}"
                         )
-                        if result:
-                            season_results.append(result)
 
-                    if not season_results:
-                        print("No valid backtest results")
-                        continue
+                        # Recalculate ELO ratings with these parameters
+                        self.elo_system.calculate_elo_ratings(
+                            start_year=2003,
+                            k_factor=k,
+                            recency_factor=rf,
+                            recency_window=rw,
+                            carry_over_factor=co,
+                        )
 
-                    # Calculate aggregate metrics
-                    avg_accuracy = np.mean([r["accuracy"] for r in season_results])
-                    avg_brier = np.mean([r["brier_score"] for r in season_results])
-                    avg_log_loss = np.mean([r["log_loss"] for r in season_results])
+                        # Run backtests for each season
+                        season_results = []
+                        for season in test_seasons:
+                            result = self.backtest_tournament(
+                                season, method="elo", visualize=False
+                            )
+                            if result:
+                                season_results.append(result)
 
-                    # Store results
-                    result_data = {
-                        "k_factor": k,
-                        "recency_factor": rf,
-                        "recency_window": rw,
-                        "accuracy": avg_accuracy,
-                        "brier_score": avg_brier,
-                        "log_loss": avg_log_loss,
-                        "num_seasons": len(season_results),
-                    }
-                    results.append(result_data)
+                        if not season_results:
+                            print("No valid backtest results")
+                            continue
 
-                    # Track best parameters
-                    if avg_log_loss < best_log_loss:
-                        best_log_loss = avg_log_loss
-                        best_params = (k, rf, rw)
+                        # Calculate aggregate metrics
+                        avg_accuracy = np.mean([r["accuracy"] for r in season_results])
+                        avg_brier = np.mean([r["brier_score"] for r in season_results])
+                        avg_log_loss = np.mean([r["log_loss"] for r in season_results])
 
-                    print(
-                        f"Accuracy: {avg_accuracy:.4f}, Brier: {avg_brier:.4f}, Log Loss: {avg_log_loss:.4f}"
-                    )
+                        # Store results
+                        result_data = {
+                            "k_factor": k,
+                            "recency_factor": rf,
+                            "recency_window": rw,
+                            "carry_over_factor": co,
+                            "accuracy": avg_accuracy,
+                            "brier_score": avg_brier,
+                            "log_loss": avg_log_loss,
+                            "num_seasons": len(season_results),
+                        }
+                        results.append(result_data)
+
+                        # Track best parameters
+                        if avg_log_loss < best_log_loss:
+                            best_log_loss = avg_log_loss
+                            best_params = (k, rf, rw, co)
 
         # Convert to DataFrame and sort by performance
         results_df = pd.DataFrame(results)
@@ -611,7 +616,7 @@ class MarchMadnessPredictor:
 
         if best_params:
             print(
-                f"\nBest parameters: k_factor={best_params[0]}, recency_factor={best_params[1]}, recency_window={best_params[2]}"
+                f"\nBest parameters: k_factor={best_params[0]}, recency_factor={best_params[1]}, recency_window={best_params[2]}, carry_over_factor={best_params[3]}"
             )
             print(f"Best log loss: {best_log_loss:.4f}")
 
