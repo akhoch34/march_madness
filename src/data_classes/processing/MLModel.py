@@ -174,6 +174,9 @@ class MarchMadnessMLModel:
 
         # Set flag to avoid infinite recursion
         self._feature_dataset_created = True
+        self.feature_df.to_csv(
+            f"output/{self.data_manager.gender}_feature_dataset.csv", index=False
+        )
 
         return self.feature_df
 

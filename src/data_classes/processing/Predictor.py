@@ -364,11 +364,6 @@ class MarchMadnessPredictor:
             "game_details": game_details,
         }
 
-        # Print summary
-        print(f"Brier Score: {brier_score:.4f}")
-        print(f"Accuracy: {accuracy:.4f}")
-        print(f"Log Loss: {log_loss_value:.4f}")
-
         # Visualize if requested
         if visualize:
             self.visualizer.visualize_backtest(results)
@@ -516,3 +511,169 @@ class MarchMadnessPredictor:
             plt.show()
 
         return comparison
+
+    def tune_elo_parameters(self, test_seasons=None, visualize=True):
+        """
+        Tune ELO parameters using grid search on historical tournaments
+
+        Parameters:
+        test_seasons: List of seasons to test (default: last 5 available seasons)
+        visualize: Whether to visualize results
+
+        Returns:
+        DataFrame: Parameter tuning results sorted by performance
+        """
+        if test_seasons is None:
+            # Use last 5 seasons by default
+            all_seasons = sorted(
+                self.data_manager.data["tourney_results"]["Season"].unique()
+            )
+            test_seasons = all_seasons[-5:]
+
+        print(
+            f"Tuning ELO parameters on {len(test_seasons)} tournament seasons: {test_seasons}"
+        )
+
+        # Define parameter grid
+        k_factors = [10, 15, 20, 22, 25, 28, 30, 35, 40]
+        recency_factors = [1.0, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3]
+        recency_windows = [10, 15, 20, 25, 30]
+
+        results = []
+        best_log_loss = float("inf")
+        best_params = None
+
+        # Total combinations to test
+        total_combos = len(k_factors) * len(recency_factors) * len(recency_windows)
+        combo_count = 0
+
+        for k in k_factors:
+            for rf in recency_factors:
+                for rw in recency_windows:
+                    combo_count += 1
+                    print(
+                        f"\nTesting combination {combo_count}/{total_combos}: k={k}, recency_factor={rf}, recency_window={rw}"
+                    )
+
+                    # Recalculate ELO ratings with these parameters
+                    self.elo_system.calculate_elo_ratings(
+                        start_year=2003,
+                        k_factor=k,
+                        recency_factor=rf,
+                        recency_window=rw,
+                    )
+
+                    # Run backtests for each season
+                    season_results = []
+                    for season in test_seasons:
+                        result = self.backtest_tournament(
+                            season, method="elo", visualize=False
+                        )
+                        if result:
+                            season_results.append(result)
+
+                    if not season_results:
+                        print("No valid backtest results")
+                        continue
+
+                    # Calculate aggregate metrics
+                    avg_accuracy = np.mean([r["accuracy"] for r in season_results])
+                    avg_brier = np.mean([r["brier_score"] for r in season_results])
+                    avg_log_loss = np.mean([r["log_loss"] for r in season_results])
+
+                    # Store results
+                    result_data = {
+                        "k_factor": k,
+                        "recency_factor": rf,
+                        "recency_window": rw,
+                        "accuracy": avg_accuracy,
+                        "brier_score": avg_brier,
+                        "log_loss": avg_log_loss,
+                        "num_seasons": len(season_results),
+                    }
+                    results.append(result_data)
+
+                    # Track best parameters
+                    if avg_log_loss < best_log_loss:
+                        best_log_loss = avg_log_loss
+                        best_params = (k, rf, rw)
+
+                    print(
+                        f"Accuracy: {avg_accuracy:.4f}, Brier: {avg_brier:.4f}, Log Loss: {avg_log_loss:.4f}"
+                    )
+
+        # Convert to DataFrame and sort by performance
+        results_df = pd.DataFrame(results)
+        results_df = results_df.sort_values("log_loss")
+
+        print("\nParameter Tuning Results (Best Configurations):")
+        print(results_df.head(5))
+
+        if best_params:
+            print(
+                f"\nBest parameters: k_factor={best_params[0]}, recency_factor={best_params[1]}, recency_window={best_params[2]}"
+            )
+            print(f"Best log loss: {best_log_loss:.4f}")
+
+        if visualize and len(results_df) > 0:
+            self._visualize_parameter_tuning(results_df)
+
+        return results_df
+
+    def _visualize_parameter_tuning(self, results_df):
+        """Helper method to visualize parameter tuning results"""
+        plt.figure(figsize=(15, 10))
+
+        # 1. Plot k_factor vs log_loss
+        plt.subplot(2, 2, 1)
+        k_factors = results_df["k_factor"].unique()
+        k_loss_values = [
+            results_df[results_df["k_factor"] == k]["log_loss"].mean()
+            for k in k_factors
+        ]
+        plt.plot(k_factors, k_loss_values, "o-", linewidth=2)
+        plt.xlabel("k_factor")
+        plt.ylabel("Average Log Loss")
+        plt.title("Effect of k_factor on Log Loss")
+        plt.grid(True, alpha=0.3)
+
+        # 2. Plot recency_factor vs log_loss
+        plt.subplot(2, 2, 2)
+        rf_factors = results_df["recency_factor"].unique()
+        rf_loss_values = [
+            results_df[results_df["recency_factor"] == rf]["log_loss"].mean()
+            for rf in rf_factors
+        ]
+        plt.plot(rf_factors, rf_loss_values, "o-", linewidth=2)
+        plt.xlabel("recency_factor")
+        plt.ylabel("Average Log Loss")
+        plt.title("Effect of recency_factor on Log Loss")
+        plt.grid(True, alpha=0.3)
+
+        # 3. Plot recency_window vs log_loss
+        plt.subplot(2, 2, 3)
+        rw_values = results_df["recency_window"].unique()
+        rw_loss_values = [
+            results_df[results_df["recency_window"] == rw]["log_loss"].mean()
+            for rw in rw_values
+        ]
+        plt.plot(rw_values, rw_loss_values, "o-", linewidth=2)
+        plt.xlabel("recency_window")
+        plt.ylabel("Average Log Loss")
+        plt.title("Effect of recency_window on Log Loss")
+        plt.grid(True, alpha=0.3)
+
+        # 4. Plot top 10 configurations
+        plt.subplot(2, 2, 4)
+        top10 = results_df.head(10).copy()
+        top10["config"] = top10.apply(
+            lambda x: f"k={x['k_factor']}, rf={x['recency_factor']}, rw={x['recency_window']}",
+            axis=1,
+        )
+        plt.barh(top10["config"], top10["log_loss"], color="green", alpha=0.7)
+        plt.xlabel("Log Loss")
+        plt.title("Top 10 Parameter Configurations")
+        plt.grid(True, alpha=0.3)
+
+        plt.tight_layout()
+        plt.show()

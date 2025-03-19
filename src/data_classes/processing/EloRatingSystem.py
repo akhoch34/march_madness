@@ -20,21 +20,25 @@ class EloRatingSystem:
         self,
         start_year=2003,
         k_factor=30,
+        recency_factor=1.0,  # Added: How much to amplify recent games
+        recency_window=15,  # Added: Days to consider "recent"
         home_advantage=100,
         carry_over_factor=0.75,
         new_team_rating=1500,
         reset_each_year=False,
     ):
         """
-        Calculate ELO ratings for all teams across multiple seasons.
+        Calculate ELO ratings for all teams across multiple seasons with recency weighting.
 
         Parameters:
         start_year (int): First year to calculate ELO ratings for
-        k_factor (float): How much each game impacts ELO (higher = more impact)
+        k_factor (float): Base k-factor - how much each game impacts ELO
+        recency_factor (float): Multiplier for recent games (1.0 = no recency bias)
+        recency_window (int): Number of days considered "recent" before tournament
         home_advantage (float): ELO points added for home court advantage
         carry_over_factor (float): How much of previous season's rating carries over (0-1)
         new_team_rating (float): Default rating for new teams
-        reset_each_year (bool): Whether to reset ratings each season (if True, carry_over_factor is ignored)
+        reset_each_year (bool): Whether to reset ratings each season
         """
         print(
             f"Calculating ELO ratings from {start_year} to {self.data_manager.current_season}..."
@@ -115,11 +119,25 @@ class EloRatingSystem:
             # Process each game in the season
             season_games = all_games[all_games["Season"] == season]
 
+            # Get max day number for the season to calculate recency
+            max_day_num = season_games["DayNum"].max()
+
             for _, game in season_games.iterrows():
                 w_team = game["WTeamID"]
                 l_team = game["LTeamID"]
                 day_num = game["DayNum"]
                 w_loc = game["WLoc"]
+
+                # Calculate recency-adjusted k_factor
+                days_from_end = max_day_num - day_num
+                if days_from_end <= recency_window:
+                    # Recent games get higher weight
+                    recency_weight = 1 + (recency_factor - 1) * (
+                        1 - days_from_end / recency_window
+                    )
+                    adjusted_k_factor = k_factor * recency_weight
+                else:
+                    adjusted_k_factor = k_factor
 
                 # Get current ratings
                 w_rating = current_ratings.get(w_team, new_team_rating)
@@ -144,8 +162,8 @@ class EloRatingSystem:
                     1.0 + math.pow(10, (adjusted_l_rating - adjusted_w_rating) / 400.0)
                 )
 
-                # Update ratings
-                rating_change = k_factor * (1.0 - win_prob)
+                # Update ratings using adjusted_k_factor
+                rating_change = adjusted_k_factor * (1.0 - win_prob)
                 current_ratings[w_team] = w_rating + rating_change
                 current_ratings[l_team] = l_rating - rating_change
 
@@ -176,7 +194,13 @@ class EloRatingSystem:
         return 1500
 
     def elo_win_probability(
-        self, team1_elo, team2_elo, home_advantage=100, location=None, seed_diff=None, tournament=False
+        self,
+        team1_elo,
+        team2_elo,
+        home_advantage=100,
+        location=None,
+        seed_diff=None,
+        tournament=False,
     ):
         """Calculate win probability based on ELO ratings"""
         # Adjust for home court if specified
@@ -184,12 +208,14 @@ class EloRatingSystem:
             team1_elo += home_advantage
         elif location == "A":  # Team1 away
             team2_elo += home_advantage
-            
+
         # For tournament games, adjust based on seed difference if available
         if tournament and seed_diff is not None:
             # Higher seeds (lower numbers) get a boost
             if seed_diff < 0:  # Team1 is higher seed
-                team1_elo += min(abs(seed_diff) * 15, 100)  # Cap the boost at 100 points
+                team1_elo += min(
+                    abs(seed_diff) * 15, 100
+                )  # Cap the boost at 100 points
             elif seed_diff > 0:  # Team2 is higher seed
                 team2_elo += min(seed_diff * 15, 100)  # Cap the boost at 100 points
 
@@ -215,10 +241,10 @@ class EloRatingSystem:
         # Get ELO ratings
         team1_elo = self.get_team_elo(season, team1_id, day_num - 1)
         team2_elo = self.get_team_elo(season, team2_id, day_num - 1)
-        
+
         # Check if this is a tournament game
         is_tournament = day_num >= 134  # Tournament starts around day 134
-        
+
         # Get seed information if it's a tournament game
         seed_diff = None
         if is_tournament:
@@ -228,8 +254,13 @@ class EloRatingSystem:
                 seed_diff = team1_seed - team2_seed  # Positive if team2 is higher seed
 
         # Calculate win probability with tournament and seed adjustments
-        return self.elo_win_probability(team1_elo, team2_elo, location=location, 
-                                         seed_diff=seed_diff, tournament=is_tournament)
+        return self.elo_win_probability(
+            team1_elo,
+            team2_elo,
+            location=location,
+            seed_diff=seed_diff,
+            tournament=is_tournament,
+        )
 
     def get_all_teams_elo(self, season, day_num=132):
         """Get ELO ratings for all teams at a specific point in time"""

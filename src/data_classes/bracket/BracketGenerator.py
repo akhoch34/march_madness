@@ -1,4 +1,5 @@
 import math
+import os
 from typing import Tuple
 from PIL import Image, ImageDraw, ImageFont
 from binarytree import Node
@@ -41,6 +42,7 @@ class BracketSimulator:
 
         Parameters:
         predictor: MarchMadnessPredictor instance (optional)
+        bracket_template_path: Path to the empty bracket template file (optional)
         """
         self.predictor = predictor
         self.teams_df: pd.DataFrame = None
@@ -50,7 +52,12 @@ class BracketSimulator:
         self.bracket_tree: BracketNode = None
         self.seed_slot_map: dict[int, Tuple[int, int]] = None
 
-        # Default slot coordinates (you can replace with your existing dictionary)
+        # Get the directory where this class is defined
+        self.class_dir = os.path.dirname(os.path.abspath(__file__))
+
+        self.bracket_template_path = os.path.join(self.class_dir, "empty.jpg")
+
+        # Default slot coordinates
         self.slot_coordinates = SLOTS
 
     def load_data(self, teams_path, seeds_path, slots_path):
@@ -110,7 +117,6 @@ class BracketSimulator:
                 "Slot data not loaded. Call load_data() or use_predictor_data() first."
             )
 
-        print(self.slots_df.columns)
         # Filter slots for the specified season
         s = self.slots_df[self.slots_df["Season"] == season]
 
@@ -161,6 +167,7 @@ class BracketSimulator:
 
         Parameters:
         method: Prediction method to use ('elo', 'ml', or 'ensemble')
+        betting_odds: Whether to show betting odds instead of probabilities
 
         Returns:
         slot_data: List of (coordinates, text) tuples for visualization
@@ -213,15 +220,6 @@ class BracketSimulator:
             """
             Convert a win probability to an implied point spread for basketball
             with special handling for extreme mismatches in tournament games.
-
-            Parameters:
-            win_probability (float): Probability that Team 1 will win (between 0 and 1)
-            std_dev (float): Standard deviation of scoring margin (default 11 for college basketball)
-            calibration (float): Calibration factor for the conversion (lower = larger spreads)
-            tournament_mode (bool): Enable special handling for tournament mismatches
-
-            Returns:
-            float: Implied point spread (negative means Team 1 is favored)
             """
             # Ensure win probability is within valid range
             win_probability = min(max(win_probability, 0.01), 0.99)
@@ -242,16 +240,7 @@ class BracketSimulator:
             return point_spread
 
         def format_spread(point_spread):
-            """
-            Format a point spread with team name and spread in standard betting notation.
-
-            Parameters:
-            team_name (str): Name of the team
-            point_spread (float): Point spread (negative means team is favored)
-
-            Returns:
-            str: Formatted string like "Team (-1.5)" or "Team (+3.0)"
-            """
+            """Format a point spread with standard betting notation."""
             # Round to nearest half point (common in betting markets)
             rounded_spread = round(point_spread * 2) / 2
 
@@ -359,6 +348,289 @@ class BracketSimulator:
 
         return slot_data
 
+    def simulate_historical_bracket(self, season, method="elo_enhanced"):
+        """
+        Simulate a historical tournament bracket comparing predicted vs actual results
+
+        Parameters:
+        season: Historical season to simulate
+        method: Prediction method to use
+
+        Returns:
+        tuple: (slot_data for visualization, accuracy metrics)
+        """
+        if self.predictor is None:
+            raise ValueError("No predictor attached. Call set_predictor() first.")
+
+        # Build the bracket tree
+        if (
+            self.bracket_tree is None
+            or self.seed_slot_map is None
+            or self.current_season != season
+        ):
+            self.current_season = season
+            self.build_bracket_tree(season)
+
+        # Get the tournament teams and seeds
+        teams_df = self.teams_df
+        seeds_df = self.seeds_df[self.seeds_df["Season"] == season]
+
+        # Get actual tournament results
+        tourney_results = self.predictor.data_manager.data["tourney_results"]
+        season_results = tourney_results[tourney_results["Season"] == season]
+
+        # Create a lookup of actual game results
+        actual_results = {}
+        for _, game in season_results.iterrows():
+            winner_id = game["WTeamID"]
+            loser_id = game["LTeamID"]
+            # Create a key with both teams (order doesn't matter when checking)
+            game_key1 = (winner_id, loser_id)
+            game_key2 = (loser_id, winner_id)
+            actual_results[game_key1] = winner_id
+            actual_results[game_key2] = winner_id  # Same winner, different key order
+
+        # Map seeds to team IDs
+        seed_team_map = dict(zip(seeds_df["Seed"], seeds_df["TeamID"]))
+
+        # Helper function to find team ID for a seed
+        def get_team_id(seed_slot):
+            seed = self.seed_slot_map[seed_slot]
+            return seed_team_map.get(seed)
+
+        # Helper function to get prediction for a matchup
+        def predict_matchup(team1_id, team2_id):
+            if team1_id is None or team2_id is None:
+                return 0.5  # Default if we don't have both teams
+
+            # Get prediction from predictor
+            pred = self.predictor.predict_game(
+                team1_id,
+                team2_id,
+                day_num=134,  # First round of tournament
+                season=season,
+                method=method,
+            )
+
+            return pred
+
+        # Solve the bracket using actual results when available
+        levels = list(reversed(self.bracket_tree.levels))
+        correct_predictions = 0
+        total_predictions = 0
+
+        for level in levels:
+            # Process pairs of nodes at this level
+            for i in range(0, len(level), 2):
+                if i + 1 >= len(level):  # Skip if no pair
+                    continue
+
+                left_node = level[i]
+                right_node = level[i + 1]
+
+                # If this is a leaf node, get the teams
+                if left_node.left is None:
+                    left_node.team_id = get_team_id(left_node.value)
+                    left_node.seed = self.seed_slot_map[left_node.value]
+                    if left_node.team_id:
+                        left_node.team_name = teams_df[
+                            teams_df["TeamID"] == left_node.team_id
+                        ]["TeamName"].iloc[0]
+
+                if right_node.left is None:
+                    right_node.team_id = get_team_id(right_node.value)
+                    right_node.seed = self.seed_slot_map[right_node.value]
+                    if right_node.team_id:
+                        right_node.team_name = teams_df[
+                            teams_df["TeamID"] == right_node.team_id
+                        ]["TeamName"].iloc[0]
+
+                # If both teams are known, predict the winner
+                if left_node.team_id is not None and right_node.team_id is not None:
+                    # Predict the game
+                    win_prob = predict_matchup(left_node.team_id, right_node.team_id)
+
+                    # Store the probability
+                    left_node.win_prob = win_prob
+                    right_node.win_prob = 1 - win_prob
+
+                    # Determine predicted winner
+                    predicted_winner = left_node if win_prob > 0.5 else right_node
+
+                    # Determine actual winner if this game has been played
+                    game_key = (left_node.team_id, right_node.team_id)
+                    if game_key in actual_results:
+                        actual_winner_id = actual_results[game_key]
+                        actual_winner = (
+                            left_node
+                            if actual_winner_id == left_node.team_id
+                            else right_node
+                        )
+
+                        # Store actual result flag
+                        left_node.actual_winner = actual_winner == left_node
+                        right_node.actual_winner = actual_winner == right_node
+
+                        # Check if prediction was correct
+                        prediction_correct = predicted_winner == actual_winner
+                        left_node.prediction_correct = prediction_correct
+                        right_node.prediction_correct = prediction_correct
+
+                        # Track accuracy
+                        correct_predictions += 1 if prediction_correct else 0
+                        total_predictions += 1
+
+                        # Advance the ACTUAL winner to the parent node
+                        if left_node.parent is not None:
+                            parent = left_node.parent
+                            parent.team_id = actual_winner.team_id
+                            parent.seed = actual_winner.seed
+                            parent.team_name = actual_winner.team_name
+                    else:
+                        # No actual result, advance predicted winner
+                        if left_node.parent is not None:
+                            parent = left_node.parent
+                            parent.team_id = predicted_winner.team_id
+                            parent.seed = predicted_winner.seed
+                            parent.team_name = predicted_winner.team_name
+
+        # Generate the slot data for visualization
+        slot_data = []
+
+        # Flatten the tree
+        all_nodes = [node for level in self.bracket_tree.levels for node in level]
+
+        # Generate text for each node
+        for node in all_nodes:
+            # Get the coordinates for this slot
+            slot_num = len(self.slot_coordinates) - node.value
+            coords = self.slot_coordinates.get(slot_num, (0, 0))
+
+            # Generate text
+            if node.team_name:
+                # Show seed, team name, and comparison data if available
+                if (
+                    node.parent is not None
+                    and hasattr(node, "win_prob")
+                    and node.win_prob is not None
+                ):
+                    if hasattr(node, "actual_winner"):
+                        # Include both prediction and actual result
+                        prob_text = f" {node.win_prob:.1%}"
+                        # Green checkmark for correct prediction, red X for incorrect
+                        result_indicator = "✓" if node.prediction_correct else "✗"
+                        color = "green" if node.prediction_correct else "red"
+                        text = f"{node.seed[1:]} {node.team_name}{prob_text} [{result_indicator}]"
+                    else:
+                        prob_text = f" {node.win_prob:.1%}"
+                        text = f"{node.seed[1:]} {node.team_name}{prob_text}"
+                else:
+                    text = f"{node.seed[1:]} {node.team_name}"
+            else:
+                text = ""
+
+            slot_data.append((coords, text, getattr(node, "prediction_correct", None)))
+
+        # Calculate accuracy
+        accuracy = (
+            correct_predictions / total_predictions if total_predictions > 0 else 0
+        )
+
+        return slot_data, {
+            "accuracy": accuracy,
+            "correct": correct_predictions,
+            "total": total_predictions,
+        }
+
+    # Shared helper methods
+    def _prepare_bracket_image(self):
+        """Prepare the base bracket image for drawing"""
+        try:
+            img = Image.open(self.bracket_template_path)
+        except:
+            # Create a blank image if template not found
+            img = Image.new("RGB", (940, 700), color="white")
+            print(
+                f"Warning: Empty bracket template not found at {self.bracket_template_path}. Using blank image."
+            )
+
+        # Create drawing object
+        draw = ImageDraw.Draw(img)
+
+        # Try to use a font if available
+        try:
+            font = ImageFont.truetype("Helvetica", 10)
+        except:
+            font = None
+
+        return img, draw, font
+
+    def _draw_bracket_data(self, draw, slot_data, font, is_historical=False):
+        """Draw team information on the bracket image"""
+        for item in slot_data:
+            if is_historical:
+                coords, text, is_correct = item
+                # Choose color based on prediction correctness
+                if is_correct is None:
+                    color = (0, 0, 0)  # Black for nodes without prediction data
+                elif is_correct:
+                    color = (0, 128, 0)  # Green for correct predictions
+                else:
+                    color = (255, 0, 0)  # Red for incorrect predictions
+            else:
+                coords, text = item
+                color = (0, 0, 0)  # Default black
+
+            draw.text(coords, text, fill=color, font=font)
+
+    def _create_and_save_figure(self, img, title, output_path=None, show_plot=True):
+        """Create matplotlib figure, save and display if requested"""
+        # Convert to numpy array for matplotlib
+        img_array = np.array(img)
+
+        # Create a matplotlib figure
+        dpi = 30
+        height, width, _ = img_array.shape
+        figsize = (width / dpi, height / dpi)
+
+        import matplotlib.pyplot as plt
+
+        fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+        ax.imshow(img_array)
+        ax.axis("off")
+
+        # Set title
+        plt.title(title)
+
+        # Save if requested
+        if output_path:
+            plt.savefig(output_path, bbox_inches="tight", dpi=dpi)
+            print(f"Saved bracket to {output_path}")
+
+        # Show if requested
+        if show_plot:
+            try:
+                plt.tight_layout()
+                plt.ion()  # Turn on interactive mode
+                plt.show()
+            except Exception as e:
+                print(f"Warning: Could not display plot: {str(e)}")
+
+        return fig
+
+    def _visualize_bracket_common(
+        self, slot_data, title, output_path=None, show_plot=True, is_historical=False
+    ):
+        """Shared visualization method for regular and historical brackets"""
+        # Prepare the image and drawing objects
+        img, draw, font = self._prepare_bracket_image()
+
+        # Draw bracket data
+        self._draw_bracket_data(draw, slot_data, font, is_historical)
+
+        # Create, save and show the figure
+        return self._create_and_save_figure(img, title, output_path, show_plot)
+
     def visualize_bracket(
         self, method="ensemble", output_path=None, show_plot=True, betting_odds=False
     ):
@@ -368,7 +640,7 @@ class BracketSimulator:
         Parameters:
         method: Prediction method to use
         output_path: Path to save the image (optional)
-        show_plot: Whether to display the plot (only works in interactive environments)
+        show_plot: Whether to display the plot
         betting_odds: Whether to show betting odds instead of probabilities
 
         Returns:
@@ -377,76 +649,41 @@ class BracketSimulator:
         # Simulate the bracket
         slot_data = self.simulate_bracket(method=method, betting_odds=betting_odds)
 
-        # Load the empty bracket template
-        empty_bracket_path = "./empty.jpg"  # Update with your path
-
-        try:
-            img = Image.open(empty_bracket_path)
-        except:
-            # Create a blank image if template not found
-            img = Image.new("RGB", (940, 700), color="white")
-            print(
-                f"Warning: Empty bracket template not found at {empty_bracket_path}. Using blank image."
-            )
-
-        # Draw on the image
-        draw = ImageDraw.Draw(img)
-
-        # Try to use a font if available
-        try:
-            font = ImageFont.truetype("Helvetica", 10)
-        except:
-            font = None
-
-        # Draw each team and prediction
-        for coords, text in slot_data:
-            draw.text(coords, text, fill=(0, 0, 0), font=font)
-
-        # Convert to numpy array for matplotlib
-        img_array = np.array(img)
-
-        # Create a matplotlib figure
-        dpi = 30
-        height, width, _ = img_array.shape
-        figsize = (width / dpi, height / dpi)
-
-        # Use plt.ioff() to avoid showing the figure if not requested
-        import matplotlib.pyplot as plt
-
-        # plt.ioff()  # Turn off interactive mode
-
-        fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
-        ax.imshow(img_array)
-        ax.axis("off")
-
         # Set title
         title = f"{self.current_season} March Madness Bracket Prediction ({method})"
         if betting_odds:
             title += " - Betting Odds"
-        plt.title(title)
 
-        # Save if requested
-        if output_path:
-            # Check if output_path is a file path or a BytesIO object
-            if isinstance(output_path, str):
-                plt.savefig(output_path, bbox_inches="tight", dpi=dpi)
-                print(f"Saved bracket to {output_path}")
-            else:
-                # Assume it's a BytesIO object
-                plt.savefig(output_path, format="png", bbox_inches="tight", dpi=dpi)
+        # Use shared visualization method
+        return self._visualize_bracket_common(slot_data, title, output_path, show_plot)
 
-        # Show if requested and in an interactive environment
-        if show_plot:
-            try:
-                plt.tight_layout()
-                plt.ion()  # Turn on interactive mode
-                plt.show()
-            except Exception as e:
-                print(f"Warning: Could not display plot: {str(e)}")
+    def visualize_historical_bracket(
+        self, season, method="elo_enhanced", output_path=None, show_plot=True
+    ):
+        """
+        Visualize a historical tournament bracket with predictions vs actual results
 
-        plt.close(fig)  # Close the figure to free memory
+        Parameters:
+        season: Historical season to visualize
+        method: Prediction method to use
+        output_path: Path to save the image (optional)
+        show_plot: Whether to display the plot
 
-        return fig
+        Returns:
+        fig: Matplotlib figure object
+        """
+        # Simulate the historical bracket
+        slot_data, metrics = self.simulate_historical_bracket(season, method=method)
+
+        # Set title with accuracy metrics
+        accuracy_pct = metrics["accuracy"] * 100
+        title = f"{season} Tournament: Predicted vs Actual ({method})\n"
+        title += f"Accuracy: {accuracy_pct:.1f}% ({metrics['correct']}/{metrics['total']} games)"
+
+        # Use shared visualization method
+        return self._visualize_bracket_common(
+            slot_data, title, output_path, show_plot, is_historical=True
+        )
 
     def get_team_path(self, team_id):
         """
@@ -485,7 +722,7 @@ class BracketSimulator:
             opponent = parent.left if current == parent.right else parent.right
 
             # Determine the round name
-            # Fix: Find the level that contains the current node and get its index
+            # Find the level that contains the current node and get its index
             for i, level in enumerate(self.bracket_tree.levels):
                 if current in level:
                     level_index = i
