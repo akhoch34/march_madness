@@ -21,6 +21,7 @@ class BracketNode(Node):
         self.team_name: str = None
         self.win_prob: float = None
         self.odds: float = None
+        self.next_round_style = None  # Add this new property
 
     def __setattr__(self, name, value):
         """Override to maintain parent references when children are added"""
@@ -456,6 +457,7 @@ class BracketSimulator:
 
                     # Determine predicted winner
                     predicted_winner = left_node if win_prob > 0.5 else right_node
+                    predicted_loser = right_node if win_prob > 0.5 else left_node
 
                     # Determine actual winner if this game has been played
                     game_key = (left_node.team_id, right_node.team_id)
@@ -467,14 +469,26 @@ class BracketSimulator:
                             else right_node
                         )
 
-                        # Store actual result flag
-                        left_node.actual_winner = actual_winner == left_node
-                        right_node.actual_winner = actual_winner == right_node
-
                         # Check if prediction was correct
                         prediction_correct = predicted_winner == actual_winner
-                        left_node.prediction_correct = prediction_correct
-                        right_node.prediction_correct = prediction_correct
+
+                        # Store style information for the parent node (where the winner advances to)
+                        if left_node.parent is not None:
+                            parent = left_node.parent
+                            if prediction_correct:
+                                parent.next_round_style = {
+                                    "color": "green",
+                                    "strikethrough": False,
+                                    "actual_winner": None,
+                                }
+                            else:
+                                # Show predicted winner with strikethrough, then actual winner
+                                parent.next_round_style = {
+                                    "color": "red",
+                                    "strikethrough": True,
+                                    "predicted_team": f"{predicted_winner.seed[1:]} {predicted_winner.team_name}",
+                                    "actual_winner": f"{actual_winner.seed[1:]} {actual_winner.team_name}",
+                                }
 
                         # Track accuracy
                         correct_predictions += 1 if prediction_correct else 0
@@ -486,50 +500,47 @@ class BracketSimulator:
                             parent.team_id = actual_winner.team_id
                             parent.seed = actual_winner.seed
                             parent.team_name = actual_winner.team_name
-                    else:
-                        # No actual result, advance predicted winner
-                        if left_node.parent is not None:
-                            parent = left_node.parent
-                            parent.team_id = predicted_winner.team_id
-                            parent.seed = predicted_winner.seed
-                            parent.team_name = predicted_winner.team_name
 
         # Generate the slot data for visualization
         slot_data = []
-
-        # Flatten the tree
         all_nodes = [node for level in self.bracket_tree.levels for node in level]
 
         # Generate text for each node
         for node in all_nodes:
-            # Get the coordinates for this slot
             slot_num = len(self.slot_coordinates) - node.value
             coords = self.slot_coordinates.get(slot_num, (0, 0))
 
-            # Generate text
             if node.team_name:
-                # Show seed, team name, and comparison data if available
-                if (
-                    node.parent is not None
-                    and hasattr(node, "win_prob")
-                    and node.win_prob is not None
-                ):
-                    if hasattr(node, "actual_winner"):
-                        # Include both prediction and actual result
-                        prob_text = f" {node.win_prob:.1%}"
-                        # Green checkmark for correct prediction, red X for incorrect
-                        result_indicator = "✓" if node.prediction_correct else "✗"
-                        color = "green" if node.prediction_correct else "red"
-                        text = f"{node.seed[1:]} {node.team_name}{prob_text} [{result_indicator}]"
+                # Base text always includes seed and team name
+                if hasattr(node, "next_round_style") and node.next_round_style:
+                    if node.next_round_style["strikethrough"]:
+                        # For incorrect predictions, use the predicted team name
+                        base_text = node.next_round_style["predicted_team"]
                     else:
-                        prob_text = f" {node.win_prob:.1%}"
-                        text = f"{node.seed[1:]} {node.team_name}{prob_text}"
+                        # For correct predictions or non-styled nodes, use actual team name
+                        base_text = f"{node.seed[1:]} {node.team_name}"
                 else:
-                    text = f"{node.seed[1:]} {node.team_name}"
-            else:
-                text = ""
+                    base_text = f"{node.seed[1:]} {node.team_name}"
 
-            slot_data.append((coords, text, getattr(node, "prediction_correct", None)))
+                # Add probability if available
+                if node.parent is not None and node.win_prob is not None:
+                    base_text += f" {node.win_prob:.1%}"
+
+                # Get styling information
+                if hasattr(node, "next_round_style") and node.next_round_style:
+                    color = node.next_round_style["color"]
+                    strikethrough = node.next_round_style["strikethrough"]
+                    actual_winner = node.next_round_style.get("actual_winner")
+                else:
+                    color = "black"
+                    strikethrough = False
+                    actual_winner = None
+
+                slot_data.append(
+                    (coords, base_text, color, strikethrough, actual_winner)
+                )
+            else:
+                slot_data.append((coords, "", "black", False, None))
 
         # Calculate accuracy
         accuracy = (
@@ -567,21 +578,54 @@ class BracketSimulator:
 
     def _draw_bracket_data(self, draw, slot_data, font, is_historical=False):
         """Draw team information on the bracket image"""
-        for item in slot_data:
-            if is_historical:
-                coords, text, is_correct = item
-                # Choose color based on prediction correctness
-                if is_correct is None:
-                    color = (0, 0, 0)  # Black for nodes without prediction data
-                elif is_correct:
-                    color = (0, 128, 0)  # Green for correct predictions
-                else:
-                    color = (255, 0, 0)  # Red for incorrect predictions
-            else:
-                coords, text = item
-                color = (0, 0, 0)  # Default black
+        if not is_historical:
+            # Handle regular bracket visualization
+            for coords, text in slot_data:
+                draw.text(coords, text, fill=(0, 0, 0), font=font)
+            return
 
-            draw.text(coords, text, fill=color, font=font)
+        def get_text_dimensions(text, font):
+            """Helper function to get text dimensions that works with all PIL versions"""
+            if hasattr(font, "getbbox"):  # Newer PIL versions
+                bbox = font.getbbox(text)
+                return bbox[2] - bbox[0], bbox[3] - bbox[1]
+            elif hasattr(font, "getsize"):  # Older PIL versions
+                return font.getsize(text)
+            else:  # Fallback if no font or missing methods
+                return len(text) * 6, 10
+
+        # Handle historical bracket visualization
+        for coords, text, color, strikethrough, actual_winner in slot_data:
+            if not text:  # Skip empty slots
+                continue
+
+            # Convert color names to RGB
+            color_map = {"black": (0, 0, 0), "red": (255, 0, 0), "green": (0, 128, 0)}
+            rgb_color = color_map.get(color, (0, 0, 0))
+
+            # Get text dimensions for strikethrough
+            if font:
+                text_width, text_height = get_text_dimensions(text, font)
+            else:
+                text_width = len(text) * 6  # Approximate width
+                text_height = 10  # Approximate height
+
+            # Draw the text
+            draw.text(coords, text, fill=rgb_color, font=font)
+
+            # Draw strikethrough if needed
+            if strikethrough:
+                x, y = coords
+                # Draw line through the middle of the text
+                line_y = y + (text_height // 2)
+                draw.line((x, line_y, x + text_width, line_y), fill=rgb_color, width=1)
+
+                # Add actual winner after the strikethrough text
+                if actual_winner:
+                    # Draw arrow and actual winner
+                    actual_text = f" → {actual_winner}"
+                    actual_x = x + text_width + 5
+                    draw.text((actual_x, y), actual_text, fill=rgb_color, font=font)
 
     def _create_and_save_figure(self, img, title, output_path=None, show_plot=True):
         """Create matplotlib figure, save and display if requested"""
