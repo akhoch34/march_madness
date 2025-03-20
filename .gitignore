@@ -3,3 +3,4 @@ data
 notebooks/2022_womens
 notebooks/2022_xgb/.ipynb_checkpoints
 *.pyc
+*output/
