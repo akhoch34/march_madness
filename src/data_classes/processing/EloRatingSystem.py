@@ -26,6 +26,7 @@ class EloRatingSystem:
         carry_over_factor=0.75,
         new_team_rating=1500,
         reset_each_year=False,
+        output_path=None,
     ):
         """
         Calculate ELO ratings for all teams across multiple seasons with recency weighting.
@@ -176,6 +177,28 @@ class EloRatingSystem:
                 ]
 
         print(f"Calculated ELO ratings for {len(seasons)} seasons")
+
+        # Convert the ELO ratings dictionary to a DataFrame
+        if output_path:
+            elo_data = []
+            for (season, team_id, day_num), rating in self.team_elo_ratings.items():
+                team_name = self.data_manager.get_team_name(team_id)
+                elo_data.append(
+                    {
+                        "Season": season,
+                        "TeamID": team_id,
+                        "TeamName": team_name,
+                        "DayNum": day_num,
+                        "ELO": rating,
+                    }
+                )
+
+            elo_df = pd.DataFrame(elo_data)
+
+            # Save to CSV
+            elo_df.to_csv(output_path, index=False)
+            print(f"Saved ELO ratings to {output_path}")
+
         return self.team_elo_ratings
 
     def get_team_elo(self, season, team_id, day_num=None):
