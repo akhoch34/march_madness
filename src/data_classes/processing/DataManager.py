@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from collections import defaultdict
+from pathlib import Path
 
 
 class MarchMadnessDataManager:
@@ -20,11 +21,34 @@ class MarchMadnessDataManager:
         self.current_season = current_season
         self.data = {}
         self.seed_lookup = {}  # Store seed lookups by (season, team_id)
+        self._file_lookup_cache = {}
+
+    def _resolve_file_path(self, filename):
+        """Resolve a CSV path from either the root data dir or a nested stage folder."""
+        if filename in self._file_lookup_cache:
+            return self._file_lookup_cache[filename]
+
+        direct_path = Path(self.data_dir) / filename
+        if direct_path.exists():
+            resolved = str(direct_path)
+            self._file_lookup_cache[filename] = resolved
+            return resolved
+
+        matches = sorted(Path(self.data_dir).rglob(filename), reverse=True)
+        if matches:
+            resolved = str(matches[0])
+            self._file_lookup_cache[filename] = resolved
+            return resolved
+
+        raise FileNotFoundError(f"Could not find '{filename}' under {self.data_dir}")
+
+    def _read_csv(self, filename):
+        return pd.read_csv(self._resolve_file_path(filename))
 
     def load_data(self):
         """Load all necessary data files"""
         # Teams data
-        all_teams = pd.read_csv(f"{self.data_dir}/{self.gender}Teams.csv")
+        all_teams = self._read_csv(f"{self.gender}Teams.csv")
 
         # Women's teams don't have the first/last season cols for some reason
         if self.gender == "M":
@@ -32,7 +56,7 @@ class MarchMadnessDataManager:
                 all_teams["LastD1Season"] >= self.current_season
             ]
         else:
-            mens_teams = pd.read_csv(f"{self.data_dir}/MTeams.csv")
+            mens_teams = self._read_csv("MTeams.csv")
             self.data["teams"] = all_teams[
                 all_teams["TeamName"].isin(
                     mens_teams[mens_teams["LastD1Season"] >= self.current_season][
@@ -43,34 +67,34 @@ class MarchMadnessDataManager:
 
         # Regular season results
         self.data["regular_season"] = pd.read_csv(
-            f"{self.data_dir}/{self.gender}RegularSeasonCompactResults.csv"
+            self._resolve_file_path(f"{self.gender}RegularSeasonCompactResults.csv")
         )
 
         # Tournament results
         self.data["tourney_results"] = pd.read_csv(
-            f"{self.data_dir}/{self.gender}NCAATourneyCompactResults.csv"
+            self._resolve_file_path(f"{self.gender}NCAATourneyCompactResults.csv")
         )
 
         # Tournament seeds
         self.data["tourney_seeds"] = pd.read_csv(
-            f"{self.data_dir}/{self.gender}NCAATourneySeeds.csv"
+            self._resolve_file_path(f"{self.gender}NCAATourneySeeds.csv")
         )
 
         # Tournament seeds
         self.data["tourney_slots"] = pd.read_csv(
-            f"{self.data_dir}/{self.gender}NCAATourneySlots.csv"
+            self._resolve_file_path(f"{self.gender}NCAATourneySlots.csv")
         )
 
         # Try to load detailed results if available (for advanced features)
         try:
             self.data["regular_season_detailed"] = pd.read_csv(
-                f"{self.data_dir}/{self.gender}RegularSeasonDetailedResults.csv"
+                self._resolve_file_path(f"{self.gender}RegularSeasonDetailedResults.csv")
             )
             self.detailed_stats_available = True
 
             # Also load tournament detailed results
             self.data["tourney_detailed"] = pd.read_csv(
-                f"{self.data_dir}/{self.gender}NCAATourneyDetailedResults.csv"
+                self._resolve_file_path(f"{self.gender}NCAATourneyDetailedResults.csv")
             )
         except FileNotFoundError:
             self.detailed_stats_available = False
@@ -78,7 +102,7 @@ class MarchMadnessDataManager:
         # Try to load rankings data if available
         try:
             self.data["rankings"] = pd.read_csv(
-                f"{self.data_dir}/{self.gender}MasseyOrdinals.csv"
+                self._resolve_file_path(f"{self.gender}MasseyOrdinals.csv")
             )
             self.rankings_available = True
         except FileNotFoundError:
@@ -87,14 +111,35 @@ class MarchMadnessDataManager:
         # Load secondary tournament results if available
         try:
             self.data["secondary_tourney"] = pd.read_csv(
-                f"{self.data_dir}/{self.gender}SecondaryTourneyCompactResults.csv"
+                self._resolve_file_path(f"{self.gender}SecondaryTourneyCompactResults.csv")
             )
             self.secondary_tourney_available = True
         except FileNotFoundError:
             self.secondary_tourney_available = False
 
+        # Load conference tournament results if available
+        try:
+            self.data["conf_tourney"] = pd.read_csv(
+                self._resolve_file_path(f"{self.gender}ConferenceTourneyGames.csv")
+            )
+            self.conf_tourney_available = True
+        except FileNotFoundError:
+            self.conf_tourney_available = False
+
         # Process seeds
         self.preprocess_seeds()
+
+        # Leakage check: warn if the data directory contains tournament results
+        # from the current season or later (future results would leak into features)
+        max_tourney_season = self.data["tourney_results"]["Season"].max()
+        if max_tourney_season >= self.current_season:
+            import warnings
+            warnings.warn(
+                f"'{self.data_dir}' has tournament results through {max_tourney_season} "
+                f"but current_season={self.current_season}. Use data/{self.current_season}/ "
+                f"to avoid leaking future results into predictions.",
+                stacklevel=2,
+            )
 
         print(f"Loaded {len(self.data)} datasets")
         return self.data

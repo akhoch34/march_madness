@@ -1,14 +1,23 @@
+import os
+import time
+
+from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.metrics import (
     accuracy_score,
     log_loss,
     brier_score_loss,
-    mean_squared_error,
 )
-from sklearn.model_selection import train_test_split
-import xgboost as xgb
+from sklearn.model_selection import GroupKFold
+from scipy.interpolate import UnivariateSpline
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from sklearn.isotonic import IsotonicRegression
+
+try:
+    import xgboost as xgb
+except ImportError:
+    xgb = None
 
 from .DataManager import MarchMadnessDataManager
 from .EloRatingSystem import EloRatingSystem
@@ -33,14 +42,37 @@ class MarchMadnessMLModel:
             "Season",
             "Team1ID",
             "Team2ID",
-            "ELOWinProb",
             "ELO_residual",
         ]
         self._feature_dataset_created = False
+        self.calibrator = None   # isotonic regression calibrator (optional)
+        self.bt_model = None     # BradleyTerry model (optional, set externally)
+        self._feature_lookup = None
+        self._generated_matchup_cache = {}
+        self._season_team_stats_cache = {}
+        self._season_rank_cache = {}
+        self.seed_spline = None  # spline for seed-based calibration
+        self.spline_blend = 0.3  # fraction of ML vs spline (0.3 ML + 0.7 spline)
+
+    def _log_every(self, index, total, label, every=250):
+        if total <= 0:
+            return
+        if index == total or index % every == 0:
+            print(f"{label}: {index}/{total} ({index / total:.1%})")
+
+    def _feature_cache_path(self):
+        path = os.path.join(
+            "output",
+            str(self.data_manager.current_season),
+            "features",
+            self.data_manager.gender,
+        )
+        os.makedirs(path, exist_ok=True)
+        return os.path.join(path, "feature_dataset.csv")
 
     def create_feature_dataset(
         self,
-        train_years_range=(2010, 2024),
+        train_years_range=None,
         include_elo=True,
         include_advanced_stats=True,
     ):
@@ -52,12 +84,33 @@ class MarchMadnessMLModel:
         include_elo (bool): Whether to include ELO rating features
         include_advanced_stats (bool): Whether to include advanced box score stats
         """
+        if train_years_range is None:
+            train_years_range = (
+                max(2003, self.data_manager.current_season - 8),
+                self.data_manager.current_season - 1,
+            )
+
         # Prevent infinite recursion
         if self._feature_dataset_created:
             print("Feature dataset already created, skipping")
             return self.feature_df
 
-        print("Creating feature dataset...")
+        cache_path = self._feature_cache_path()
+        if os.path.exists(cache_path):
+            self.feature_df = pd.read_csv(cache_path)
+            self.feature_columns = [
+                col for col in self.feature_df.columns if col not in self.exclude_columns
+            ]
+            self._initialize_feature_lookup()
+            self._feature_dataset_created = True
+            print(f"Loaded cached feature dataset from {cache_path}")
+            return self.feature_df
+
+        print(
+            f"Creating feature dataset for {self.data_manager.gender} "
+            f"{self.data_manager.current_season} using tournaments "
+            f"{train_years_range[0]}-{train_years_range[1]}..."
+        )
 
         # Process seeds first
         self.data_manager.preprocess_seeds()
@@ -79,7 +132,8 @@ class MarchMadnessMLModel:
 
         if include_advanced_stats and not advanced_stats_calculated:
             self.stats_calculator.calculate_advanced_team_stats(
-                start_season=min(train_years_range[0], 2003)
+                start_season=min(train_years_range[0], 2003),
+                include_tourney=False,
             )
 
         # Get all tournament matchups from historical data
@@ -87,7 +141,14 @@ class MarchMadnessMLModel:
 
         # Create features for each historical matchup
         features = []
+        eligible_games = tourney_games[
+            (tourney_games["Season"] >= train_years_range[0])
+            & (tourney_games["Season"] <= train_years_range[1])
+        ]
+        total_games = len(eligible_games)
+        print(f"Building training rows from {total_games} tournament games...")
 
+        processed_games = 0
         for _, game in tourney_games.iterrows():
             season = game["Season"]
 
@@ -157,11 +218,27 @@ class MarchMadnessMLModel:
                     self._get_advanced_stats_features(season, team1_id, team2_id)
                 )
 
+            # Add coach quality features (9d)
+            game_features.update(self._get_coach_features(season, team1_id, team2_id))
+
+            # Add Bradley-Terry strength features (9a)
+            if self.bt_model is not None:
+                game_features.update(
+                    self.bt_model.get_strength_features(team1_id, team2_id, season)
+                )
+
             features.append(game_features)
 
             # Also add the reversed matchup (with opposite result)
             reversed_features = self._create_reversed_features(game_features)
             features.append(reversed_features)
+            processed_games += 1
+            self._log_every(
+                processed_games,
+                total_games,
+                "  Feature rows built",
+                every=100,
+            )
 
         # Create DataFrame with all features
         self.feature_df = pd.DataFrame(features)
@@ -171,14 +248,24 @@ class MarchMadnessMLModel:
         self.feature_columns = [
             col for col in self.feature_df.columns if col not in self.exclude_columns
         ]
+        self._initialize_feature_lookup()
 
         # Set flag to avoid infinite recursion
         self._feature_dataset_created = True
-        self.feature_df.to_csv(
-            f"output/{self.data_manager.gender}_feature_dataset.csv", index=False
-        )
+        self.feature_df.to_csv(cache_path, index=False)
 
         return self.feature_df
+
+    def _initialize_feature_lookup(self):
+        if self.feature_df is None or self.feature_df.empty:
+            self._feature_lookup = {}
+            return
+
+        lookup = {}
+        for row in self.feature_df.itertuples(index=False):
+            key = (int(row.Season), int(row.Team1ID), int(row.Team2ID))
+            lookup[key] = row._asdict()
+        self._feature_lookup = lookup
 
     def _create_reversed_features(self, game_features):
         """Create reversed features (swap team1 and team2)"""
@@ -359,6 +446,15 @@ class MarchMadnessMLModel:
                 self._get_advanced_stats_features(season, team1_id, team2_id)
             )
 
+        # Add coach quality features (9d)
+        game_features.update(self._get_coach_features(season, team1_id, team2_id))
+
+        # Add Bradley-Terry strength features (9a)
+        if self.bt_model is not None:
+            game_features.update(
+                self.bt_model.get_strength_features(team1_id, team2_id, season)
+            )
+
         return game_features
 
     def get_matchup_features(
@@ -369,16 +465,23 @@ class MarchMadnessMLModel:
         if self.feature_df is None:
             self.create_feature_dataset()
 
-        # Check if this matchup exists in our feature dataset
-        existing_features = self.feature_df[
-            (self.feature_df["Team1ID"] == team1_id)
-            & (self.feature_df["Team2ID"] == team2_id)
-            & (self.feature_df["Season"] == season)
-        ]
+        cache_key = (int(season), int(team1_id), int(team2_id), int(day_num))
+
+        if cache_key in self._generated_matchup_cache:
+            return self._generated_matchup_cache[cache_key]
+
+        if self._feature_lookup is None:
+            self._initialize_feature_lookup()
+
+        existing_row = None if self._feature_lookup is None else self._feature_lookup.get(
+            (int(season), int(team1_id), int(team2_id))
+        )
 
         # If we have existing features, return them
-        if len(existing_features) > 0:
-            return existing_features
+        if existing_row is not None:
+            df_existing = pd.DataFrame([existing_row])
+            self._generated_matchup_cache[cache_key] = df_existing
+            return df_existing
 
         # Otherwise, generate new features for this matchup
         new_features = self.generate_features_for_matchup(
@@ -394,23 +497,24 @@ class MarchMadnessMLModel:
                 if col not in df_new.columns:
                     # Add missing column with default value 0
                     df_new[col] = 0
+            df_new = df_new[self.feature_columns]
+
+        self._generated_matchup_cache[cache_key] = df_new
 
         return df_new
 
     def predict(self, team1_id, team2_id, season, day_num=132):
         """
         Make a prediction for a specific matchup using the ELO-enhanced model.
-        First gets base ELO prediction, then applies ML correction if available.
+        Returns blend of ML classifier probability and seed-spline anchor.
+        Falls back to ELO if model is not available.
         """
-        # Get base ELO prediction
         elo_pred = self.elo_system.predict_game(team1_id, team2_id, day_num, season)
 
-        # If we don't have a trained ML model, just return the ELO prediction
         if self.model is None:
             return elo_pred
 
         try:
-            # Get features for this matchup
             matchup_features = self.get_matchup_features(
                 team1_id, team2_id, season, day_num
             )
@@ -421,116 +525,205 @@ class MarchMadnessMLModel:
                 )
                 return elo_pred
 
-            # Extract just the feature columns we need
-            features = matchup_features[self.feature_columns]
+            features = matchup_features[self.feature_columns].fillna(0)
+            ml_pred = float(self.model.predict_proba(features)[0, 1])
 
-            # Make ML prediction (which predicts residual)
-            ml_correction = self.model.predict(features)[0]
+            # Spline-based seed anchor
+            if self.seed_spline is not None:
+                t1s = self.data_manager.seed_lookup.get((season, team1_id), 8)
+                t2s = self.data_manager.seed_lookup.get((season, team2_id), 8)
+                seed_diff = t2s - t1s
+                spline_pred = float(np.clip(self.seed_spline(seed_diff), 0.025, 0.975))
+                raw_pred = self.spline_blend * ml_pred + (1 - self.spline_blend) * spline_pred
+            else:
+                raw_pred = ml_pred
 
-            # Apply correction to ELO prediction
-            final_pred = np.clip(elo_pred + ml_correction, 0.01, 0.999)
+            raw_pred = float(np.clip(raw_pred, 0.01, 0.999))
 
-            return final_pred
+            if self.calibrator is not None:
+                return float(np.clip(self.calibrator.predict([raw_pred])[0], 0.01, 0.999))
+            return raw_pred
 
         except Exception as e:
             print(f"Error making prediction: {e}")
-            # Fallback to ELO if ML prediction fails
             return elo_pred
 
-    def train_model(self, model_type="xgboost", test_size=0.2, random_state=42):
+    def predict_many(self, matchups, season, day_num=132):
+        """Bulk prediction path for a list of (team1_id, team2_id) matchups."""
+        if self.model is None:
+            return [
+                self.elo_system.predict_game(team1_id, team2_id, day_num, season)
+                for team1_id, team2_id in matchups
+            ]
+
+        rows = []
+        seed_diffs = []
+        total = len(matchups)
+        print(f"Preparing bulk feature rows for {total} matchups...")
+
+        for index, (team1_id, team2_id) in enumerate(matchups, start=1):
+            t1s = self.data_manager.seed_lookup.get((season, team1_id), 8)
+            t2s = self.data_manager.seed_lookup.get((season, team2_id), 8)
+            seed_diffs.append(t2s - t1s)
+            matchup_features = self.get_matchup_features(
+                team1_id, team2_id, season, day_num
+            )
+            rows.append(matchup_features.iloc[0].to_dict())
+            self._log_every(index, total, "  Bulk features prepared", every=250)
+
+        features_df = pd.DataFrame(rows)
+        for col in self.feature_columns:
+            if col not in features_df.columns:
+                features_df[col] = 0
+        features_df = features_df[self.feature_columns].fillna(0)
+        print(
+            f"Running model inference on shape={features_df.shape} "
+            f"for season {season}..."
+        )
+
+        ml_preds = self.model.predict_proba(features_df)[:, 1]
+        print("Bulk model inference complete.")
+
+        if self.seed_spline is not None:
+            spline_preds = np.clip(self.seed_spline(np.array(seed_diffs)), 0.025, 0.975)
+            raw_preds = self.spline_blend * ml_preds + (1 - self.spline_blend) * spline_preds
+        else:
+            raw_preds = ml_preds
+
+        raw_preds = np.clip(raw_preds, 0.01, 0.999)
+
+        if self.calibrator is not None:
+            print("Applying calibrated probability mapping...")
+            return np.clip(self.calibrator.predict(raw_preds), 0.01, 0.999).tolist()
+
+        return raw_preds.tolist()
+
+    def train_model(
+        self,
+        model_type="xgboost",
+        test_size=0.2,
+        random_state=42,
+        train_years_range=None,
+        calibrate=False,
+    ):
         """
-        Train a model to predict residuals (corrections) to ELO predictions
+        Train a direct binary classifier for tournament win probability.
+        Uses GroupKFold(Season) to prevent same-season row leakage.
+        Blends ML prediction with a seed-spline anchor (0.3 ML + 0.7 spline).
         """
-        print("Training ELO-enhanced ML model...")
+        print("Training ELO-enhanced ML model (direct classifier + spline blend)...")
+
+        if train_years_range is None:
+            train_years_range = (
+                max(2003, self.data_manager.current_season - 8),
+                self.data_manager.current_season - 1,
+            )
+        print(
+            f"Training window: {train_years_range[0]}-{train_years_range[1]} "
+            f"for season {self.data_manager.current_season}"
+        )
 
         # Create or ensure feature dataset exists
         if self.feature_df is None or not self._feature_dataset_created:
-            self.create_feature_dataset()
+            self.create_feature_dataset(train_years_range=train_years_range)
 
-        if "ELO_residual" not in self.feature_df.columns:
-            print("Error: ELO_residual column not found in feature dataset.")
+        if "Result" not in self.feature_df.columns:
+            print("Error: Result column not found in feature dataset.")
             return None
 
-        # Prepare features and target (residual)
-        X = self.feature_df[self.feature_columns]
-        y = self.feature_df["ELO_residual"]  # Target is ELO residual
+        # Prepare features and target (direct classification)
+        X = self.feature_df[self.feature_columns].fillna(0)
+        y = self.feature_df["Result"]
+        groups = self.feature_df["Season"]
 
-        # Split into training and test sets
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=test_size, random_state=random_state
-        )
+        print(f"Feature matrix shape: {X.shape}")
+        print(f"Training seasons: {sorted(groups.unique().tolist())}")
 
-        print(f"Training set: {X_train.shape[0]} samples")
-        print(f"Test set: {X_test.shape[0]} samples")
+        # Fit seed-spline on all training data
+        seed_diffs = self.feature_df["SeedDiff"].values
+        results = y.values
+        sort_idx = np.argsort(seed_diffs)
+        try:
+            self.seed_spline = UnivariateSpline(
+                seed_diffs[sort_idx],
+                results[sort_idx],
+                s=len(results),
+                ext=3,
+            )
+            print("Seed spline fitted.")
+        except Exception as e:
+            print(f"Warning: spline fitting failed ({e}). No spline blend will be used.")
+            self.seed_spline = None
 
-        # Get baseline ELO predictions for evaluation
-        elo_train = self.feature_df.loc[y_train.index, "ELOWinProb"]
-        elo_test = self.feature_df.loc[y_test.index, "ELOWinProb"]
-        y_actual_train = self.feature_df.loc[y_train.index, "Result"]
-        y_actual_test = self.feature_df.loc[y_test.index, "Result"]
-
-        # Initialize model
-        if model_type == "xgboost":
-            self.model = xgb.XGBRegressor(
-                n_estimators=50,
-                learning_rate=0.03,
-                max_depth=2,
+        # Initialize classifier
+        def _make_clf():
+            if xgb is None:
+                return HistGradientBoostingClassifier(
+                    max_iter=150,
+                    learning_rate=0.05,
+                    max_depth=3,
+                    min_samples_leaf=20,
+                    random_state=random_state,
+                )
+            return xgb.XGBClassifier(
+                n_estimators=100,
+                learning_rate=0.05,
+                max_depth=3,
                 min_child_weight=3,
                 subsample=0.7,
                 colsample_bytree=0.7,
-                objective="reg:squarederror",
+                eval_metric="logloss",
                 random_state=random_state,
+                verbosity=0,
             )
 
-        # Train model on residuals
-        self.model.fit(X_train, y_train)
+        # GroupKFold CV for evaluation (prevents same-season row leakage)
+        gkf = GroupKFold(n_splits=5)
+        oof_ml = np.zeros(len(X))
+        oof_spline = np.zeros(len(X))
+        print("Running GroupKFold(5) cross-validation by Season...")
+        for fold_num, (train_idx, val_idx) in enumerate(gkf.split(X, y, groups=groups), start=1):
+            tmp = _make_clf()
+            tmp.fit(X.iloc[train_idx], y.iloc[train_idx])
+            oof_ml[val_idx] = tmp.predict_proba(X.iloc[val_idx])[:, 1]
+            if self.seed_spline is not None:
+                oof_spline[val_idx] = np.clip(
+                    self.seed_spline(self.feature_df["SeedDiff"].values[val_idx]),
+                    0.025, 0.975,
+                )
+            else:
+                oof_spline[val_idx] = 0.5
+            print(f"  CV fold {fold_num}/5 complete")
 
-        # Make predictions
-        train_residuals = self.model.predict(X_train)
-        test_residuals = self.model.predict(X_test)
-
-        # Apply corrections to get final predictions
-        train_preds = np.clip(elo_train + train_residuals, 0.01, 0.999)
-        test_preds = np.clip(elo_test + test_residuals, 0.01, 0.999)
-
-        # Evaluate baseline ELO performance
-        elo_train_acc = accuracy_score(y_actual_train, elo_train > 0.5)
-        elo_test_acc = accuracy_score(y_actual_test, elo_test > 0.5)
-        elo_train_brier = brier_score_loss(y_actual_train, elo_train)
-        elo_test_brier = brier_score_loss(y_actual_test, elo_test)
-        elo_train_log_loss_val = log_loss(y_actual_train, elo_train)
-        elo_test_log_loss_val = log_loss(y_actual_test, elo_test)
-
-        # Evaluate combined model performance
-        train_acc = accuracy_score(y_actual_train, train_preds > 0.5)
-        test_acc = accuracy_score(y_actual_test, test_preds > 0.5)
-        train_brier = brier_score_loss(y_actual_train, train_preds)
-        test_brier = brier_score_loss(y_actual_test, test_preds)
-        train_log_loss_val = log_loss(y_actual_train, train_preds)
-        test_log_loss_val = log_loss(y_actual_test, test_preds)
-
-        # Calculate MSE on residuals
-        train_mse = mean_squared_error(y_train, train_residuals)
-        test_mse = mean_squared_error(y_test, test_residuals)
-
-        # Print comparison results
-        print("\nPerformance Comparison - ELO vs ELO-Enhanced ML:")
+        # Evaluate CV performance
+        oof_blended = self.spline_blend * oof_ml + (1 - self.spline_blend) * oof_spline
+        y_arr = y.values
+        cv_brier = brier_score_loss(y_arr, oof_blended)
+        cv_acc = accuracy_score(y_arr, oof_blended > 0.5)
+        cv_logloss = log_loss(y_arr, np.clip(oof_blended, 0.01, 0.999))
         print(
-            f"{'Metric':<20} {'ELO Train':<12} {'ELO Test':<12} {'Enhanced Train':<12} {'Enhanced Test':<12} {'Improvement':<12}"
+            f"\nCV (GroupKFold/Season) — Brier: {cv_brier:.4f}  "
+            f"Accuracy: {cv_acc:.4f}  LogLoss: {cv_logloss:.4f}"
         )
-        print("-" * 80)
-        print(
-            f"{'Accuracy':<20} {elo_train_acc:.4f}{'':<8} {elo_test_acc:.4f}{'':<8} {train_acc:.4f}{'':<8} {test_acc:.4f}{'':<8} {test_acc - elo_test_acc:.4f}"
-        )
-        print(
-            f"{'Brier Score':<20} {elo_train_brier:.4f}{'':<8} {elo_test_brier:.4f}{'':<8} {train_brier:.4f}{'':<8} {test_brier:.4f}{'':<8} {elo_test_brier - test_brier:.4f}"
-        )
-        print(
-            f"{'Log Loss':<20} {elo_train_log_loss_val:.4f}{'':<8} {elo_test_log_loss_val:.4f}{'':<8} {train_log_loss_val:.4f}{'':<8} {test_log_loss_val:.4f}{'':<8} {elo_test_log_loss_val - test_log_loss_val:.4f}"
-        )
-        print(
-            f"{'MSE on Residuals':<20} {'N/A':<12} {'N/A':<12} {train_mse:.4f}{'':<8} {test_mse:.4f}"
-        )
+
+        # Train final model on all data
+        print(f"Fitting final {model_type} classifier on all {len(X)} samples...")
+        self.model = _make_clf()
+        self.model.fit(X, y)
+        print("Final model fit complete.")
+
+        # Optional isotonic calibration on OOF predictions
+        if calibrate:
+            try:
+                calibrator = IsotonicRegression(out_of_bounds="clip")
+                calibrator.fit(oof_blended, y_arr)
+                self.calibrator = calibrator
+                print("Isotonic calibration fit on OOF blended predictions.")
+            except Exception as e:
+                print(f"Warning: calibration fitting failed ({e}). Skipping.")
+                self.calibrator = None
+        else:
+            self.calibrator = None
 
         # Feature importance
         if hasattr(self.model, "feature_importances_") and self.feature_columns:
@@ -557,390 +750,306 @@ class MarchMadnessMLModel:
         plt.tight_layout()
         plt.show()
 
-    def _get_season_stats(self, season, team1_id, team2_id):
-        """Get season performance stats for both teams with enhanced recency metrics"""
-        # Filter regular season games for this season
+    def _build_season_team_stats_cache(self, season):
+        if season in self._season_team_stats_cache:
+            return
+        start = time.time()
+        print(f"Building season stats cache for {season}...")
+
         season_games = self.data_manager.data["regular_season"][
             self.data_manager.data["regular_season"]["Season"] == season
-        ]
+        ].copy()
 
-        # Also get tournament games (will include conference tournaments)
-        tournament_games = self.data_manager.data["tourney_results"][
-            self.data_manager.data["tourney_results"]["Season"] == season
-        ]
-
-        # Combine regular season and tournament games
-        all_games = pd.concat([season_games, tournament_games])
-
-        # --- TRADITIONAL SEASON-LONG METRICS (KEEPING EXISTING CODE) ---
-        # Team1 stats
-        team1_wins = season_games[season_games["WTeamID"] == team1_id].shape[0]
-        team1_losses = season_games[season_games["LTeamID"] == team1_id].shape[0]
-        team1_win_pct = (
-            team1_wins / (team1_wins + team1_losses)
-            if (team1_wins + team1_losses) > 0
-            else 0
-        )
-
-        # Team2 stats
-        team2_wins = season_games[season_games["WTeamID"] == team2_id].shape[0]
-        team2_losses = season_games[season_games["LTeamID"] == team2_id].shape[0]
-        team2_win_pct = (
-            team2_wins / (team2_wins + team2_losses)
-            if (team2_wins + team2_losses) > 0
-            else 0
-        )
-
-        # --- ENHANCED RECENCY FEATURES ---
-
-        # Get all games for each team sorted by day
-        team1_games = pd.concat(
-            [
-                all_games[all_games["WTeamID"] == team1_id].assign(
-                    Result=1,
-                    ScoreMargin=all_games["WScore"] - all_games["LScore"],
-                    isWin=1,
-                ),
-                all_games[all_games["LTeamID"] == team1_id].assign(
-                    Result=0,
-                    ScoreMargin=all_games["LScore"] - all_games["WScore"],
-                    isWin=0,
-                ),
-            ]
-        ).sort_values(
-            "DayNum", ascending=True
-        )  # Sorting in ascending order for time series
-
-        team2_games = pd.concat(
-            [
-                all_games[all_games["WTeamID"] == team2_id].assign(
-                    Result=1,
-                    ScoreMargin=all_games["WScore"] - all_games["LScore"],
-                    isWin=1,
-                ),
-                all_games[all_games["LTeamID"] == team2_id].assign(
-                    Result=0,
-                    ScoreMargin=all_games["LScore"] - all_games["WScore"],
-                    isWin=0,
-                ),
-            ]
-        ).sort_values(
-            "DayNum", ascending=True
-        )  # Sorting in ascending order for time series
-
-        # 1. Better Last10 features (basic version already exists)
-        team1_last_10 = team1_games.tail(10) if len(team1_games) > 0 else pd.DataFrame()
-        team2_last_10 = team2_games.tail(10) if len(team2_games) > 0 else pd.DataFrame()
-
-        team1_last_10_win_pct = (
-            team1_last_10["Result"].mean() if len(team1_last_10) > 0 else team1_win_pct
-        )
-        team2_last_10_win_pct = (
-            team2_last_10["Result"].mean() if len(team2_last_10) > 0 else team2_win_pct
-        )
-
-        # 2. Exponentially weighted recent win percentage (more weight to recent games)
-        # Get the last 10 games with exponential weights (most recent games weighted more)
-        def get_exp_weighted_win_pct(team_games, window=10, halflife=3):
-            """Calculate exponentially weighted win percentage for recent games"""
-            if len(team_games) == 0:
-                return 0.0
-
-            # Take last n games
-            recent_games = team_games.tail(window)
-            if len(recent_games) == 0:
-                return 0.0
-
-            # Apply exponential weights
-            weights = np.exp(np.arange(len(recent_games)) / halflife)
-            weights = weights / weights.sum()  # Normalize weights
-
-            # Calculate weighted average
-            weighted_win_pct = (recent_games["Result"] * weights).sum()
-            return weighted_win_pct
-
-        team1_exp_win_pct = get_exp_weighted_win_pct(team1_games)
-        team2_exp_win_pct = get_exp_weighted_win_pct(team2_games)
-
-        # 3. Last 5 vs Previous 5 (momentum indicator)
-        team1_last_5_win_pct = (
-            team1_games.tail(5)["Result"].mean()
-            if len(team1_games) >= 5
-            else team1_win_pct
-        )
-        team1_prev_5_win_pct = (
-            team1_games.iloc[-10:-5]["Result"].mean()
-            if len(team1_games) >= 10
-            else team1_win_pct
-        )
-        team1_momentum = (
-            team1_last_5_win_pct - team1_prev_5_win_pct
-        )  # Positive = improving, Negative = declining
-
-        team2_last_5_win_pct = (
-            team2_games.tail(5)["Result"].mean()
-            if len(team2_games) >= 5
-            else team2_win_pct
-        )
-        team2_prev_5_win_pct = (
-            team2_games.iloc[-10:-5]["Result"].mean()
-            if len(team2_games) >= 10
-            else team2_win_pct
-        )
-        team2_momentum = team2_last_5_win_pct - team2_prev_5_win_pct
-
-        # 4. Scoring trend features (are they scoring more or less lately?)
-        def get_scoring_trend(team_games, window=5):
-            """Calculate scoring trend by comparing recent games to season average"""
-            if len(team_games) < window:
-                return 0.0
-
-            # For wins, use WScore; for losses, use LScore
-            recent_scores = []
-            for _, game in team_games.tail(window).iterrows():
-                if game["isWin"] == 1:
-                    recent_scores.append(game["WScore"] if "WScore" in game else 0)
-                else:
-                    recent_scores.append(game["LScore"] if "LScore" in game else 0)
-
-            recent_avg = np.mean(recent_scores) if recent_scores else 0
-
-            all_scores = []
-            for _, game in team_games.iterrows():
-                if game["isWin"] == 1:
-                    all_scores.append(game["WScore"] if "WScore" in game else 0)
-                else:
-                    all_scores.append(game["LScore"] if "LScore" in game else 0)
-
-            season_avg = np.mean(all_scores) if all_scores else 0
-
-            return recent_avg - season_avg  # Positive = scoring more lately
-
-        team1_scoring_trend = get_scoring_trend(team1_games)
-        team2_scoring_trend = get_scoring_trend(team2_games)
-
-        # 5. Recent margin of victory
-        team1_recent_margin = (
-            team1_games.tail(5)["ScoreMargin"].mean() if len(team1_games) >= 5 else 0
-        )
-        team2_recent_margin = (
-            team2_games.tail(5)["ScoreMargin"].mean() if len(team2_games) >= 5 else 0
-        )
-
-        # 6. Winning/losing streak
-        def get_current_streak(team_games):
-            """Calculate current winning or losing streak"""
-            if len(team_games) == 0:
-                return 0
-
-            results = team_games["isWin"].values
-
-            if len(results) == 0:
-                return 0
-
-            current_result = results[-1]
-            streak = 0
-
-            # Count consecutive same results from the end
-            for i in range(len(results) - 1, -1, -1):
-                if results[i] == current_result:
-                    if current_result == 1:
-                        streak += 1  # Winning streak (positive)
-                    else:
-                        streak -= 1  # Losing streak (negative)
-                else:
-                    break
-
-            return streak
-
-        team1_streak = get_current_streak(team1_games)
-        team2_streak = get_current_streak(team2_games)
-
-        # 7. Conference tournament specific features
-        # Based on day_num, conference tournaments are typically days 118-132
-        conf_tourney_start = 118
-
-        # Extract conference tournament games
-        team1_conf_games = team1_games[
-            (team1_games["DayNum"] >= conf_tourney_start)
-            & (team1_games["DayNum"] < 134)
-        ]
-        team2_conf_games = team2_games[
-            (team2_games["DayNum"] >= conf_tourney_start)
-            & (team2_games["DayNum"] < 134)
-        ]
-
-        team1_conf_win_pct = (
-            team1_conf_games["Result"].mean()
-            if len(team1_conf_games) > 0
-            else team1_win_pct
-        )
-        team2_conf_win_pct = (
-            team2_conf_games["Result"].mean()
-            if len(team2_conf_games) > 0
-            else team2_win_pct
-        )
-
-        # How deep did they go in conference tournament (approx by last day played)
-        team1_conf_depth = (
-            team1_conf_games["DayNum"].max() - conf_tourney_start
-            if len(team1_conf_games) > 0
-            else 0
-        )
-        team2_conf_depth = (
-            team2_conf_games["DayNum"].max() - conf_tourney_start
-            if len(team2_conf_games) > 0
-            else 0
-        )
-
-        # 8. Late season performance (February onward, ~ day 70+)
-        late_season_start = 70
-
-        team1_late_games = team1_games[team1_games["DayNum"] >= late_season_start]
-        team2_late_games = team2_games[team2_games["DayNum"] >= late_season_start]
-
-        team1_late_win_pct = (
-            team1_late_games["Result"].mean()
-            if len(team1_late_games) > 0
-            else team1_win_pct
-        )
-        team2_late_win_pct = (
-            team2_late_games["Result"].mean()
-            if len(team2_late_games) > 0
-            else team2_win_pct
-        )
-
-        # Calculate strength of schedule (keeping from original code)
+        all_games = [season_games]
         if (
-            hasattr(self.stats_calculator, "advanced_team_stats")
-            and self.stats_calculator.advanced_team_stats
-            and season in self.stats_calculator.advanced_team_stats
+            hasattr(self.data_manager, "secondary_tourney_available")
+            and self.data_manager.secondary_tourney_available
+            and "secondary_tourney" in self.data_manager.data
         ):
-            # Get list of opponents and their net efficiency
-            team1_opponents = []
-            team2_opponents = []
+            all_games.append(
+                self.data_manager.data["secondary_tourney"][
+                    self.data_manager.data["secondary_tourney"]["Season"] == season
+                ].copy()
+            )
 
-            # Get opponents from wins
-            for _, game in season_games[season_games["WTeamID"] == team1_id].iterrows():
-                team1_opponents.append(game["LTeamID"])
+        conf_season = pd.DataFrame()
+        if (
+            hasattr(self.data_manager, "conf_tourney_available")
+            and self.data_manager.conf_tourney_available
+            and "conf_tourney" in self.data_manager.data
+        ):
+            conf_season = self.data_manager.data["conf_tourney"][
+                self.data_manager.data["conf_tourney"]["Season"] == season
+            ].copy()
+            all_games.append(conf_season)
 
-            for _, game in season_games[season_games["WTeamID"] == team2_id].iterrows():
-                team2_opponents.append(game["LTeamID"])
+        all_games = pd.concat(all_games, ignore_index=True) if all_games else pd.DataFrame()
+        team_game_rows = []
+        for _, game in all_games.iterrows():
+            team_game_rows.append(
+                {
+                    "TeamID": int(game["WTeamID"]),
+                    "OpponentID": int(game["LTeamID"]),
+                    "DayNum": int(game["DayNum"]),
+                    "Result": 1.0,
+                    "isWin": 1,
+                    "ScoreMargin": float(game["WScore"] - game["LScore"]),
+                    "ScoreFor": float(game["WScore"]),
+                }
+            )
+            team_game_rows.append(
+                {
+                    "TeamID": int(game["LTeamID"]),
+                    "OpponentID": int(game["WTeamID"]),
+                    "DayNum": int(game["DayNum"]),
+                    "Result": 0.0,
+                    "isWin": 0,
+                    "ScoreMargin": float(game["LScore"] - game["WScore"]),
+                    "ScoreFor": float(game["LScore"]),
+                }
+            )
 
-            # Get opponents from losses
-            for _, game in season_games[season_games["LTeamID"] == team1_id].iterrows():
-                team1_opponents.append(game["WTeamID"])
+        team_games_df = pd.DataFrame(team_game_rows)
+        if not team_games_df.empty:
+            team_games_df = team_games_df.sort_values(["TeamID", "DayNum"])
 
-            for _, game in season_games[season_games["LTeamID"] == team2_id].iterrows():
-                team2_opponents.append(game["WTeamID"])
+        reg_wins = season_games.groupby("WTeamID").size().to_dict()
+        reg_losses = season_games.groupby("LTeamID").size().to_dict()
+        season_stats = (
+            self.stats_calculator.advanced_team_stats.get(season, {})
+            if hasattr(self.stats_calculator, "advanced_team_stats")
+            else {}
+        )
 
-            # Calculate average opponent net efficiency
-            season_stats = self.stats_calculator.advanced_team_stats[season]
+        conf_champs = set()
+        if not conf_season.empty:
+            if "ConfAbbrev" in conf_season.columns:
+                for _, grp in conf_season.groupby("ConfAbbrev"):
+                    conf_champs.update(grp[grp["DayNum"] == grp["DayNum"].max()]["WTeamID"].astype(int).tolist())
+            else:
+                conf_champs.update(
+                    conf_season[conf_season["DayNum"] == conf_season["DayNum"].max()]["WTeamID"].astype(int).tolist()
+                )
 
-            team1_opp_net_eff = [
-                season_stats.get(opp, {}).get("NetEff", 0) for opp in team1_opponents
-            ]
-            team2_opp_net_eff = [
-                season_stats.get(opp, {}).get("NetEff", 0) for opp in team2_opponents
-            ]
+        cache = {}
+        team_ids = set(team_games_df["TeamID"].unique().tolist()) if not team_games_df.empty else set()
+        team_ids.update(int(t) for t in season_games["WTeamID"].unique().tolist())
+        team_ids.update(int(t) for t in season_games["LTeamID"].unique().tolist())
 
-            team1_sos = np.mean(team1_opp_net_eff) if team1_opp_net_eff else 0
-            team2_sos = np.mean(team2_opp_net_eff) if team2_opp_net_eff else 0
+        for team_id in team_ids:
+            team_games = (
+                team_games_df[team_games_df["TeamID"] == team_id].copy()
+                if not team_games_df.empty
+                else pd.DataFrame()
+            )
+            wins = float(reg_wins.get(team_id, 0))
+            losses = float(reg_losses.get(team_id, 0))
+            win_pct = wins / (wins + losses) if (wins + losses) > 0 else 0.0
 
-            # Build feature dictionary with original features plus new recency features
-            return {
-                # Original features
-                "Team1WinPct": team1_win_pct,
-                "Team2WinPct": team2_win_pct,
-                "WinPctDiff": team1_win_pct - team2_win_pct,
-                "Team1SOS": team1_sos,
-                "Team2SOS": team2_sos,
-                "SOSDiff": team1_sos - team2_sos,
-                "Team1Last10": team1_last_10_win_pct,
-                "Team2Last10": team2_last_10_win_pct,
-                "Last10Diff": team1_last_10_win_pct - team2_last_10_win_pct,
-                # New recency features
-                "Team1ExpWinPct": team1_exp_win_pct,
-                "Team2ExpWinPct": team2_exp_win_pct,
-                "ExpWinPctDiff": team1_exp_win_pct - team2_exp_win_pct,
-                "Team1Momentum": team1_momentum,
-                "Team2Momentum": team2_momentum,
-                "MomentumDiff": team1_momentum - team2_momentum,
-                "Team1ScoringTrend": team1_scoring_trend,
-                "Team2ScoringTrend": team2_scoring_trend,
-                "ScoringTrendDiff": team1_scoring_trend - team2_scoring_trend,
-                "Team1RecentMargin": team1_recent_margin,
-                "Team2RecentMargin": team2_recent_margin,
-                "RecentMarginDiff": team1_recent_margin - team2_recent_margin,
-                "Team1Streak": team1_streak,
-                "Team2Streak": team2_streak,
-                "StreakDiff": team1_streak - team2_streak,
-                "Team1ConfWinPct": team1_conf_win_pct,
-                "Team2ConfWinPct": team2_conf_win_pct,
-                "ConfWinPctDiff": team1_conf_win_pct - team2_conf_win_pct,
-                "Team1ConfDepth": team1_conf_depth,
-                "Team2ConfDepth": team2_conf_depth,
-                "ConfDepthDiff": team1_conf_depth - team2_conf_depth,
-                "Team1LateWinPct": team1_late_win_pct,
-                "Team2LateWinPct": team2_late_win_pct,
-                "LateWinPctDiff": team1_late_win_pct - team2_late_win_pct,
+            def recent_mean(values, default=0.0):
+                return float(values.mean()) if len(values) > 0 else default
+
+            last10 = team_games.tail(10)
+            last10_win_pct = recent_mean(last10["Result"], win_pct)
+
+            if len(last10) > 0:
+                weights = np.exp(np.arange(len(last10)) / 3)
+                weights = weights / weights.sum()
+                exp_win_pct = float((last10["Result"].to_numpy() * weights).sum())
+            else:
+                exp_win_pct = 0.0
+
+            last5_win_pct = recent_mean(team_games.tail(5)["Result"], win_pct)
+            prev5 = team_games.iloc[-10:-5]
+            prev5_win_pct = recent_mean(prev5["Result"], win_pct)
+            momentum = last5_win_pct - prev5_win_pct
+
+            recent_scores = recent_mean(team_games.tail(5)["ScoreFor"], 0.0)
+            season_scores = recent_mean(team_games["ScoreFor"], 0.0)
+            scoring_trend = recent_scores - season_scores if len(team_games) >= 5 else 0.0
+
+            recent_margin = recent_mean(team_games.tail(5)["ScoreMargin"], 0.0) if len(team_games) >= 5 else 0.0
+            avg_mov = recent_mean(team_games["ScoreMargin"], 0.0)
+
+            streak = 0
+            if len(team_games) > 0:
+                results = team_games["isWin"].to_numpy()
+                current_result = results[-1]
+                for idx in range(len(results) - 1, -1, -1):
+                    if results[idx] != current_result:
+                        break
+                    streak += 1 if current_result == 1 else -1
+
+            conf_games = team_games[(team_games["DayNum"] >= 118) & (team_games["DayNum"] < 134)]
+            conf_win_pct = recent_mean(conf_games["Result"], win_pct)
+            conf_depth = float(conf_games["DayNum"].max() - 118) if len(conf_games) > 0 else 0.0
+
+            late_games = team_games[team_games["DayNum"] >= 70]
+            late_win_pct = recent_mean(late_games["Result"], win_pct)
+
+            opp_ids = (
+                season_games[season_games["WTeamID"] == team_id]["LTeamID"].tolist()
+                + season_games[season_games["LTeamID"] == team_id]["WTeamID"].tolist()
+            )
+            opp_net_eff = [season_stats.get(int(opp), {}).get("NetEff", 0) for opp in opp_ids]
+            sos = float(np.mean(opp_net_eff)) if opp_net_eff else 0.0
+
+            cache[int(team_id)] = {
+                "WinPct": win_pct,
+                "SOS": sos,
+                "Last10": last10_win_pct,
+                "ExpWinPct": exp_win_pct,
+                "Momentum": momentum,
+                "ScoringTrend": scoring_trend,
+                "RecentMargin": recent_margin,
+                "Streak": float(streak),
+                "ConfWinPct": conf_win_pct,
+                "ConfDepth": conf_depth,
+                "LateWinPct": late_win_pct,
+                "AvgMOV": avg_mov,
+                "ConfChamp": float(team_id in conf_champs),
             }
-        else:
-            # Basic stats if advanced stats aren't available
-            return {
-                "Team1WinPct": team1_win_pct,
-                "Team2WinPct": team2_win_pct,
-                "WinPctDiff": team1_win_pct - team2_win_pct,
-                # Include new recency features even without advanced stats
-                "Team1Last10": team1_last_10_win_pct,
-                "Team2Last10": team2_last_10_win_pct,
-                "Last10Diff": team1_last_10_win_pct - team2_last_10_win_pct,
-                "Team1ExpWinPct": team1_exp_win_pct,
-                "Team2ExpWinPct": team2_exp_win_pct,
-                "ExpWinPctDiff": team1_exp_win_pct - team2_exp_win_pct,
-                "Team1Momentum": team1_momentum,
-                "Team2Momentum": team2_momentum,
-                "MomentumDiff": team1_momentum - team2_momentum,
-                "Team1Streak": team1_streak,
-                "Team2Streak": team2_streak,
-                "StreakDiff": team1_streak - team2_streak,
-                "Team1ConfWinPct": team1_conf_win_pct,
-                "Team2ConfWinPct": team2_conf_win_pct,
-                "ConfWinPctDiff": team1_conf_win_pct - team2_conf_win_pct,
+
+        self._season_team_stats_cache[season] = cache
+        print(
+            f"Season stats cache ready for {season}: {len(cache)} teams "
+            f"in {time.time() - start:.1f}s"
+        )
+
+    def _build_season_rank_cache(self, season):
+        if season in self._season_rank_cache:
+            return
+        start = time.time()
+
+        if not self.data_manager.rankings_available:
+            self._season_rank_cache[season] = {}
+            return
+
+        print(f"Building ranking cache for {season}...")
+
+        rankings = self.data_manager.data["rankings"]
+        season_rankings = rankings[rankings["Season"] == season]
+        team_ids = season_rankings["TeamID"].unique().tolist()
+        cache = {}
+
+        def checkpoint_mean(team_id, day_min, day_max, default):
+            sub = season_rankings[
+                (season_rankings["TeamID"] == team_id)
+                & (season_rankings["RankingDayNum"] >= day_min)
+                & (season_rankings["RankingDayNum"] <= day_max)
+            ]
+            return float(sub["OrdinalRank"].mean()) if len(sub) > 0 else default
+
+        for team_id in team_ids:
+            late = checkpoint_mean(team_id, 133, 133, 353.0)
+            if late == 353.0:
+                late = checkpoint_mean(team_id, 120, 133, 353.0)
+            early = checkpoint_mean(team_id, 30, 60, 200.0)
+            mid = checkpoint_mean(team_id, 80, 100, 200.0)
+            team_sub = season_rankings[season_rankings["TeamID"] == team_id]
+            consistency = float(team_sub["OrdinalRank"].std()) if len(team_sub) > 1 else 50.0
+            cache[int(team_id)] = {
+                "AvgRank": late,
+                "EarlyRank": early,
+                "MidRank": mid,
+                "RankTraj": early - late,
+                "RankConsistency": consistency,
             }
+
+        self._season_rank_cache[season] = cache
+        print(
+            f"Ranking cache ready for {season}: {len(cache)} teams "
+            f"in {time.time() - start:.1f}s"
+        )
+
+    def _get_season_stats(self, season, team1_id, team2_id):
+        """Get season performance stats for both teams with enhanced recency metrics"""
+        self._build_season_team_stats_cache(season)
+        team1_stats = self._season_team_stats_cache.get(season, {}).get(int(team1_id), {})
+        team2_stats = self._season_team_stats_cache.get(season, {}).get(int(team2_id), {})
+
+        def get_stat(team_stats, key, default=0.0):
+            return float(team_stats.get(key, default))
+
+        return {
+            "Team1WinPct": get_stat(team1_stats, "WinPct"),
+            "Team2WinPct": get_stat(team2_stats, "WinPct"),
+            "WinPctDiff": get_stat(team1_stats, "WinPct") - get_stat(team2_stats, "WinPct"),
+            "Team1SOS": get_stat(team1_stats, "SOS"),
+            "Team2SOS": get_stat(team2_stats, "SOS"),
+            "SOSDiff": get_stat(team1_stats, "SOS") - get_stat(team2_stats, "SOS"),
+            "Team1Last10": get_stat(team1_stats, "Last10"),
+            "Team2Last10": get_stat(team2_stats, "Last10"),
+            "Last10Diff": get_stat(team1_stats, "Last10") - get_stat(team2_stats, "Last10"),
+            "Team1ExpWinPct": get_stat(team1_stats, "ExpWinPct"),
+            "Team2ExpWinPct": get_stat(team2_stats, "ExpWinPct"),
+            "ExpWinPctDiff": get_stat(team1_stats, "ExpWinPct") - get_stat(team2_stats, "ExpWinPct"),
+            "Team1Momentum": get_stat(team1_stats, "Momentum"),
+            "Team2Momentum": get_stat(team2_stats, "Momentum"),
+            "MomentumDiff": get_stat(team1_stats, "Momentum") - get_stat(team2_stats, "Momentum"),
+            "Team1ScoringTrend": get_stat(team1_stats, "ScoringTrend"),
+            "Team2ScoringTrend": get_stat(team2_stats, "ScoringTrend"),
+            "ScoringTrendDiff": get_stat(team1_stats, "ScoringTrend") - get_stat(team2_stats, "ScoringTrend"),
+            "Team1RecentMargin": get_stat(team1_stats, "RecentMargin"),
+            "Team2RecentMargin": get_stat(team2_stats, "RecentMargin"),
+            "RecentMarginDiff": get_stat(team1_stats, "RecentMargin") - get_stat(team2_stats, "RecentMargin"),
+            "Team1Streak": get_stat(team1_stats, "Streak"),
+            "Team2Streak": get_stat(team2_stats, "Streak"),
+            "StreakDiff": get_stat(team1_stats, "Streak") - get_stat(team2_stats, "Streak"),
+            "Team1ConfWinPct": get_stat(team1_stats, "ConfWinPct"),
+            "Team2ConfWinPct": get_stat(team2_stats, "ConfWinPct"),
+            "ConfWinPctDiff": get_stat(team1_stats, "ConfWinPct") - get_stat(team2_stats, "ConfWinPct"),
+            "Team1ConfDepth": get_stat(team1_stats, "ConfDepth"),
+            "Team2ConfDepth": get_stat(team2_stats, "ConfDepth"),
+            "ConfDepthDiff": get_stat(team1_stats, "ConfDepth") - get_stat(team2_stats, "ConfDepth"),
+            "Team1LateWinPct": get_stat(team1_stats, "LateWinPct"),
+            "Team2LateWinPct": get_stat(team2_stats, "LateWinPct"),
+            "LateWinPctDiff": get_stat(team1_stats, "LateWinPct") - get_stat(team2_stats, "LateWinPct"),
+            "Team1_AvgMOV": get_stat(team1_stats, "AvgMOV"),
+            "Team2_AvgMOV": get_stat(team2_stats, "AvgMOV"),
+            "AvgMOV_Diff": get_stat(team1_stats, "AvgMOV") - get_stat(team2_stats, "AvgMOV"),
+            "Team1_ConfChamp": get_stat(team1_stats, "ConfChamp"),
+            "Team2_ConfChamp": get_stat(team2_stats, "ConfChamp"),
+            "ConfChamp_Diff": get_stat(team1_stats, "ConfChamp") - get_stat(team2_stats, "ConfChamp"),
+        }
 
     def _get_ranking_features(self, season, team1_id, team2_id):
         """Get pre-tournament ranking features for both teams"""
         if not self.data_manager.rankings_available:
             return {}
 
-        # Get final rankings before tournament (RankingDayNum = 133)
-        rankings = self.data_manager.data["rankings"]
-        pre_tourney_rankings = rankings[
-            (rankings["Season"] == season) & (rankings["RankingDayNum"] == 133)
-        ]
+        self._build_season_rank_cache(season)
+        season_cache = self._season_rank_cache.get(season, {})
+        team1_rank = season_cache.get(int(team1_id), {})
+        team2_rank = season_cache.get(int(team2_id), {})
 
-        # Aggregate rankings across systems (use mean)
-        team_ranks = {}
-        for _, row in pre_tourney_rankings.iterrows():
-            team_id = row["TeamID"]
-            if team_id not in team_ranks:
-                team_ranks[team_id] = []
-            team_ranks[team_id].append(row["OrdinalRank"])
-
-        # Calculate average ranking for each team
-        team1_avg_rank = (
-            np.mean(team_ranks.get(team1_id, [353])) if team1_id in team_ranks else 353
-        )
-        team2_avg_rank = (
-            np.mean(team_ranks.get(team2_id, [353])) if team2_id in team_ranks else 353
-        )
+        team1_avg_rank = float(team1_rank.get("AvgRank", 353.0))
+        team2_avg_rank = float(team2_rank.get("AvgRank", 353.0))
+        t1_early = float(team1_rank.get("EarlyRank", 200.0))
+        t2_early = float(team2_rank.get("EarlyRank", 200.0))
+        t1_mid = float(team1_rank.get("MidRank", 200.0))
+        t2_mid = float(team2_rank.get("MidRank", 200.0))
+        t1_traj = float(team1_rank.get("RankTraj", t1_early - team1_avg_rank))
+        t2_traj = float(team2_rank.get("RankTraj", t2_early - team2_avg_rank))
+        t1_consistency = float(team1_rank.get("RankConsistency", 50.0))
+        t2_consistency = float(team2_rank.get("RankConsistency", 50.0))
 
         return {
             "Team1AvgRank": team1_avg_rank,
             "Team2AvgRank": team2_avg_rank,
-            "RankDiff": team2_avg_rank
-            - team1_avg_rank,  # Positive if team1 is ranked better
+            "RankDiff": team2_avg_rank - team1_avg_rank,
+            "Team1_EarlyRank": t1_early,
+            "Team2_EarlyRank": t2_early,
+            "EarlyRank_Diff": t2_early - t1_early,
+            "Team1_MidRank": t1_mid,
+            "Team2_MidRank": t2_mid,
+            "MidRank_Diff": t2_mid - t1_mid,
+            "Team1_RankTraj": t1_traj,
+            "Team2_RankTraj": t2_traj,
+            "RankTraj_Diff": t1_traj - t2_traj,
+            "Team1_RankConsistency": t1_consistency,
+            "Team2_RankConsistency": t2_consistency,
+            "RankConsistency_Diff": t1_consistency - t2_consistency,
         }
 
     def _get_advanced_stats_features(self, season, team1_id, team2_id):
@@ -949,7 +1058,7 @@ class MarchMadnessMLModel:
             not hasattr(self.stats_calculator, "advanced_team_stats")
             or not self.stats_calculator.advanced_team_stats
         ):
-            self.stats_calculator.calculate_advanced_team_stats()
+            self.stats_calculator.calculate_advanced_team_stats(include_tourney=False)
 
         # Get stats for this season
         if season not in self.stats_calculator.advanced_team_stats:
@@ -1030,3 +1139,42 @@ class MarchMadnessMLModel:
                 )
 
         return features
+
+    def _get_coach_features(self, season, team1_id, team2_id):
+        """
+        Get coach quality features for both teams.
+        Requires TeamStatsCalculator.calculate_coach_features() to have been called.
+        Returns empty dict if coach features are not available (e.g., women's tournament).
+        """
+        if (
+            not hasattr(self.stats_calculator, "coach_features")
+            or not self.stats_calculator.coach_features
+        ):
+            return {}
+
+        def get_cf(team_id):
+            return self.stats_calculator.coach_features.get((season, team_id), {})
+
+        cf1 = get_cf(team1_id)
+        cf2 = get_cf(team2_id)
+
+        if not cf1 and not cf2:
+            return {}
+
+        def safe(d, key, default=0.0):
+            return d.get(key, default)
+
+        return {
+            "Team1_CoachTenure": safe(cf1, "tenure"),
+            "Team2_CoachTenure": safe(cf2, "tenure"),
+            "CoachTenure_Diff": safe(cf1, "tenure") - safe(cf2, "tenure"),
+            "Team1_CoachTourneyApps": safe(cf1, "tourney_apps"),
+            "Team2_CoachTourneyApps": safe(cf2, "tourney_apps"),
+            "CoachTourneyApps_Diff": safe(cf1, "tourney_apps") - safe(cf2, "tourney_apps"),
+            "Team1_CoachTourneyWinRate": safe(cf1, "tourney_win_rate"),
+            "Team2_CoachTourneyWinRate": safe(cf2, "tourney_win_rate"),
+            "CoachTourneyWinRate_Diff": safe(cf1, "tourney_win_rate") - safe(cf2, "tourney_win_rate"),
+            "Team1_IsFirstYearCoach": float(safe(cf1, "is_first_year", False)),
+            "Team2_IsFirstYearCoach": float(safe(cf2, "is_first_year", False)),
+            "IsFirstYearCoach_Diff": float(safe(cf1, "is_first_year", False)) - float(safe(cf2, "is_first_year", False)),
+        }

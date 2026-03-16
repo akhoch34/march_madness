@@ -19,6 +19,7 @@ class MarchMadnessPredictor:
         stats_calculator: TeamStatsCalculator,
         ml_model: MarchMadnessMLModel,
         current_season=2025,
+        bradley_terry_model=None,
     ):
         """
         Initialize the March Madness predictor
@@ -37,9 +38,15 @@ class MarchMadnessPredictor:
         self.visualizer = TournamentVisualizer(self.data_manager)
         self.ml_model = ml_model
         self.current_season = current_season
+        self.bradley_terry_model = bradley_terry_model
 
     def initialize_models(
-        self, calculate_elo=True, calculate_stats=True, train_ml=True
+        self,
+        calculate_elo=True,
+        calculate_stats=True,
+        train_ml=True,
+        train_years_range=None,
+        calibrate_ml=False,
     ):
         """Initialize all prediction models"""
         if calculate_elo and not self.elo_system.team_elo_ratings:
@@ -48,11 +55,15 @@ class MarchMadnessPredictor:
 
         if calculate_stats and not self.stats_calculator.advanced_team_stats:
             print("Calculating advanced team statistics...")
-            self.stats_calculator.calculate_advanced_team_stats()
+            self.stats_calculator.calculate_advanced_team_stats(include_tourney=False)
 
         if train_ml:
             print("Training ML model...")
-            self.ml_model.train_model(model_type="xgboost")
+            self.ml_model.train_model(
+                model_type="xgboost",
+                train_years_range=train_years_range,
+                calibrate=calibrate_ml,
+            )
 
     def predict_game(
         self, team1_id, team2_id, day_num=134, season=None, method="elo_enhanced"
@@ -81,9 +92,18 @@ class MarchMadnessPredictor:
         elif method == "elo_enhanced" and self.ml_model is not None:
             # Use ELO-enhanced model
             return self.ml_model.predict(team1_id, team2_id, season, day_num)
-        else:
-            # Default to ELO
-            return elo_pred
+        elif method == "bradley_terry" and self.bradley_terry_model is not None:
+            # Bradley-Terry pairwise strength model (9a)
+            return self.bradley_terry_model.predict_game(team1_id, team2_id, season)
+        elif method == "ensemble":
+            # Average ELO-enhanced and Bradley-Terry if both available
+            preds = [elo_pred]
+            if self.ml_model is not None:
+                preds.append(self.ml_model.predict(team1_id, team2_id, season, day_num))
+            if self.bradley_terry_model is not None:
+                preds.append(self.bradley_terry_model.predict_game(team1_id, team2_id, season))
+            return float(np.mean(preds))
+        raise ValueError(f"Unsupported prediction method: {method}")
 
     def generate_predictions(
         self,
@@ -105,7 +125,6 @@ class MarchMadnessPredictor:
         DataFrame: Prediction results with team details
         """
         print(f"Generating predictions using {method} method...")
-        print("new")
 
         # Determine which teams to include
         if get_all_matchups:
@@ -139,26 +158,50 @@ class MarchMadnessPredictor:
 
         # Generate all possible matchups
         matchups = []
+        matchup_pairs = [
+            (team1_id, team2_id)
+            for i, team1_id in enumerate(team_ids)
+            for team2_id in team_ids[i + 1 :]
+        ]
 
         # Track progress for large datasets
         count = 0
-        total = len(team_ids) * (len(team_ids) - 1) // 2
+        total = len(matchup_pairs)
+        progress_every = 100 if method in {"elo_enhanced", "ensemble"} else 1000
 
-        for i, team1_id in enumerate(team_ids):
-            for team2_id in team_ids[i + 1 :]:
+        team_names = {
+            team_id: self.data_manager.get_team_name(team_id) for team_id in team_ids
+        }
+        team_elos = {
+            team_id: self.elo_system.get_team_elo(self.current_season, team_id)
+            for team_id in team_ids
+        }
+        team_seeds = {
+            team_id: self.data_manager.seed_lookup.get((self.current_season, team_id), None)
+            for team_id in team_ids
+        }
+
+        bulk_predictions = None
+        if method == "elo_enhanced" and self.ml_model is not None:
+            print(f"Running bulk ML inference for {total} matchups...")
+            bulk_predictions = self.ml_model.predict_many(
+                matchup_pairs, self.current_season, day_num=134
+            )
+            print(f"Bulk ML inference complete for {total} matchups.")
+
+        for idx, (team1_id, team2_id) in enumerate(matchup_pairs):
                 # Create ID in required format
                 matchup_id = f"{self.current_season}_{min(team1_id, team2_id)}_{max(team1_id, team2_id)}"
 
                 # Make prediction
-                pred = self.predict_game(team1_id, team2_id, method=method)
+                if bulk_predictions is not None:
+                    pred = float(bulk_predictions[idx])
+                else:
+                    pred = self.predict_game(team1_id, team2_id, method=method)
 
                 # Get seed info if available
-                team1_seed = self.data_manager.seed_lookup.get(
-                    (self.current_season, team1_id), None
-                )
-                team2_seed = self.data_manager.seed_lookup.get(
-                    (self.current_season, team2_id), None
-                )
+                team1_seed = team_seeds[team1_id]
+                team2_seed = team_seeds[team2_id]
 
                 # Create matchup data
                 matchup_data = {
@@ -166,14 +209,10 @@ class MarchMadnessPredictor:
                     "Pred": pred,
                     "Team1ID": team1_id,
                     "Team2ID": team2_id,
-                    "Team1Name": self.data_manager.get_team_name(team1_id),
-                    "Team2Name": self.data_manager.get_team_name(team2_id),
-                    "Team1ELO": self.elo_system.get_team_elo(
-                        self.current_season, team1_id
-                    ),
-                    "Team2ELO": self.elo_system.get_team_elo(
-                        self.current_season, team2_id
-                    ),
+                    "Team1Name": team_names[team1_id],
+                    "Team2Name": team_names[team2_id],
+                    "Team1ELO": team_elos[team1_id],
+                    "Team2ELO": team_elos[team2_id],
                 }
 
                 # Add seed info if available
@@ -186,11 +225,12 @@ class MarchMadnessPredictor:
 
                 # Show progress for large datasets
                 count += 1
-                if total > 1000 and count % 1000 == 0:
+                if total > progress_every and count % progress_every == 0:
                     print(f"Processed {count}/{total} matchups ({count/total:.1%})")
 
         # Create DataFrame with predictions
         predictions_df = pd.DataFrame(matchups)
+        print(f"Finished generating {len(predictions_df)} predictions for {method}.")
 
         # Save to submission file if requested
         if submission_file:

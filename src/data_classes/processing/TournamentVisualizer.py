@@ -137,7 +137,7 @@ class TournamentVisualizer:
         # 4. Interesting games (upsets and close calls)
         # Find upsets (higher seed lost) and wrong predictions
         df_with_seeds["HigherSeedWon"] = df_with_seeds["SeedDiff"] < 0
-        df_with_seeds["Upset"] = df_with_seeds["SeedDiff"] > 0 & (
+        df_with_seeds["Upset"] = (df_with_seeds["SeedDiff"] > 0) & (
             df_with_seeds["Actual"] == 1
         )
 

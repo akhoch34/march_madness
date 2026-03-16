@@ -14,8 +14,11 @@ class TeamStatsCalculator:
         """
         self.data_manager = data_manager
         self.advanced_team_stats = {}
+        self.coach_features = {}
 
-    def calculate_advanced_team_stats(self, start_season=2003):
+    def calculate_advanced_team_stats(
+        self, start_season=2003, include_tourney=False
+    ):
         """
         Calculate advanced team statistics for all seasons where detailed data is available.
         These include:
@@ -34,17 +37,12 @@ class TeamStatsCalculator:
             f"Calculating advanced team stats from {start_season} to {self.data_manager.current_season}..."
         )
 
-        # Get all detailed game results
-        all_detailed_games = pd.concat(
-            [
-                self.data_manager.data["regular_season_detailed"],
-                (
-                    self.data_manager.data["tourney_detailed"]
-                    if "tourney_detailed" in self.data_manager.data
-                    else pd.DataFrame()
-                ),
-            ]
-        )
+        # Historical backtests must use pre-tournament features only unless
+        # a caller explicitly opts into postseason data.
+        frames = [self.data_manager.data["regular_season_detailed"]]
+        if include_tourney and "tourney_detailed" in self.data_manager.data:
+            frames.append(self.data_manager.data["tourney_detailed"])
+        all_detailed_games = pd.concat(frames, ignore_index=True)
 
         # Filter for seasons we want
         all_detailed_games = all_detailed_games[
@@ -64,7 +62,12 @@ class TeamStatsCalculator:
         advanced_stats = {}
 
         # Process each season
-        for season in seasons:
+        total_seasons = len(seasons)
+        for season_index, season in enumerate(seasons, start=1):
+            print(
+                f"  Processing advanced stats season {season} "
+                f"({season_index}/{total_seasons})..."
+            )
             # Get games for this season
             season_games = all_detailed_games[all_detailed_games["Season"] == season]
 
@@ -93,6 +96,11 @@ class TeamStatsCalculator:
 
             # Store stats for this season
             advanced_stats[season] = season_stats
+            active_teams = sum(1 for stats in season_stats.values() if stats["Games"] > 0)
+            print(
+                f"  Completed advanced stats season {season}: "
+                f"{len(season_games)} games, {active_teams} active teams"
+            )
 
         # Store in class instance
         self.advanced_team_stats = advanced_stats
@@ -347,3 +355,105 @@ class TeamStatsCalculator:
             df["Rank"] = range(1, len(df) + 1)
 
         return df
+
+    def calculate_coach_features(self, max_season: int | None = None) -> dict:
+        """
+        Compute coach quality features per (season, team_id).
+
+        Features:
+        - tenure: seasons coaching this team up to and including this season
+        - tourney_apps: career tournament appearances at ANY school
+        - tourney_win_rate: fraction of tournament games won in career
+        - is_first_year: True if first year coaching this team
+
+        Requires MTeamCoaches.csv in the data directory (men's only).
+        Returns empty dict and sets self.coach_features = {} if not available.
+        """
+        try:
+            coaches = pd.read_csv(
+                f"{self.data_manager.data_dir}/MTeamCoaches.csv"
+            )
+        except FileNotFoundError:
+            self.coach_features = {}
+            return {}
+
+        # Load tournament results for win rate calculation
+        tourney = self.data_manager.data.get("tourney_results", pd.DataFrame())
+
+        if max_season is None:
+            max_season = self.data_manager.current_season
+
+        result = {}
+
+        # For each season, find the head coach per team (LastDayNum == 154 or max for season)
+        # A coach entry covers FirstDayNum..LastDayNum within a season
+        # We take the coach active at tournament time (day ~134)
+        TOURNEY_DAY = 134
+
+        for season in range(2003, max_season + 1):
+            season_coaches = coaches[
+                (coaches["Season"] == season)
+                & (coaches["FirstDayNum"] <= TOURNEY_DAY)
+                & (coaches["LastDayNum"] >= TOURNEY_DAY)
+            ]
+
+            for _, row in season_coaches.iterrows():
+                team_id = row["TeamID"]
+                coach_name = row["CoachName"]
+
+                # Tenure: how many seasons has this coach coached this team up to now
+                prior_tenures = coaches[
+                    (coaches["CoachName"] == coach_name)
+                    & (coaches["TeamID"] == team_id)
+                    & (coaches["Season"] <= season)
+                ]
+                tenure = len(prior_tenures)
+
+                # Career tournament appearances (games coached in tournament, any school)
+                coach_all_seasons = coaches[
+                    (coaches["CoachName"] == coach_name)
+                    & (coaches["Season"] < season)
+                ]["Season"].unique()
+
+                tourney_apps = 0
+                tourney_wins = 0
+                tourney_games_coached = 0
+
+                for prev_season in coach_all_seasons:
+                    prev_team_rows = coaches[
+                        (coaches["CoachName"] == coach_name)
+                        & (coaches["Season"] == prev_season)
+                    ]
+                    if len(prev_team_rows) == 0:
+                        continue
+                    prev_team_id = prev_team_rows.iloc[0]["TeamID"]
+
+                    # Tournament games for that team that season
+                    t_games = tourney[
+                        (tourney["Season"] == prev_season)
+                        & (
+                            (tourney["WTeamID"] == prev_team_id)
+                            | (tourney["LTeamID"] == prev_team_id)
+                        )
+                    ]
+                    if len(t_games) > 0:
+                        tourney_apps += 1
+                        tourney_wins += len(t_games[t_games["WTeamID"] == prev_team_id])
+                        tourney_games_coached += len(t_games)
+
+                tourney_win_rate = (
+                    tourney_wins / tourney_games_coached
+                    if tourney_games_coached > 0
+                    else 0.0
+                )
+
+                result[(season, team_id)] = {
+                    "tenure": tenure,
+                    "tourney_apps": tourney_apps,
+                    "tourney_win_rate": tourney_win_rate,
+                    "is_first_year": tenure == 1,
+                }
+
+        self.coach_features = result
+        print(f"Calculated coach features for {len(result)} (season, team) pairs.")
+        return result

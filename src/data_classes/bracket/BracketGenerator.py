@@ -341,11 +341,33 @@ class BracketSimulator:
                 else:
                     prob_text = ""
 
-                text = f"{node.seed[1:]} {node.team_name}{prob_text}"
+                # Mark the predicted winner in First Four (play-in) games.
+                # A First Four leaf is a leaf whose parent is a meta-seed node
+                # (i.e. parent has children → parent.left is not None).
+                is_ff_leaf = (
+                    node.left is None
+                    and node.parent is not None
+                    and node.parent.left is not None
+                )
+                winner_mark = "> " if (is_ff_leaf and node.win_prob is not None and node.win_prob > 0.5) else ""
+                text = f"{winner_mark}{node.seed[1:]} {node.team_name}{prob_text}"
             else:
                 text = ""
 
             slot_data.append((coords, text))
+
+            # For meta-seed nodes (First Four winners), also draw the winner
+            # at the floating-game result slot (the blank line next to the play-in box).
+            # A meta-seed node is internal (has children) but its children are leaves.
+            if node.left is not None and node.left.left is None and node.team_name:
+                left_slot = len(self.slot_coordinates) - node.left.value
+                right_slot = len(self.slot_coordinates) - node.right.value
+                left_coords = self.slot_coordinates.get(left_slot, (0, 0))
+                right_coords = self.slot_coordinates.get(right_slot, (0, 0))
+                ff_x = left_coords[0]
+                ff_y = max(left_coords[1], right_coords[1]) + 18
+                ff_text = f"> {node.seed[1:]} {node.team_name}"
+                slot_data.append(((ff_x, ff_y), ff_text))
 
         return slot_data
 
@@ -494,12 +516,13 @@ class BracketSimulator:
                         correct_predictions += 1 if prediction_correct else 0
                         total_predictions += 1
 
-                        # Advance the ACTUAL winner to the parent node
+                        # Advance the PREDICTED winner to the parent node
+                        # (same path as bracket.png; annotations show where prediction was wrong)
                         if left_node.parent is not None:
                             parent = left_node.parent
-                            parent.team_id = actual_winner.team_id
-                            parent.seed = actual_winner.seed
-                            parent.team_name = actual_winner.team_name
+                            parent.team_id = predicted_winner.team_id
+                            parent.seed = predicted_winner.seed
+                            parent.team_name = predicted_winner.team_name
 
         # Generate the slot data for visualization
         slot_data = []
@@ -511,6 +534,14 @@ class BracketSimulator:
             coords = self.slot_coordinates.get(slot_num, (0, 0))
 
             if node.team_name:
+                # Mark actual winner in First Four (play-in) games.
+                is_ff_leaf = (
+                    node.left is None
+                    and node.parent is not None
+                    and node.parent.left is not None
+                )
+                ff_winner_mark = "> " if (is_ff_leaf and node.team_id is not None and node.parent.team_id == node.team_id) else ""
+
                 # Base text always includes seed and team name
                 if hasattr(node, "next_round_style") and node.next_round_style:
                     if node.next_round_style["strikethrough"]:
@@ -518,9 +549,9 @@ class BracketSimulator:
                         base_text = node.next_round_style["predicted_team"]
                     else:
                         # For correct predictions or non-styled nodes, use actual team name
-                        base_text = f"{node.seed[1:]} {node.team_name}"
+                        base_text = f"{ff_winner_mark}{node.seed[1:]} {node.team_name}"
                 else:
-                    base_text = f"{node.seed[1:]} {node.team_name}"
+                    base_text = f"{ff_winner_mark}{node.seed[1:]} {node.team_name}"
 
                 # Add probability if available
                 if node.parent is not None and node.win_prob is not None:
@@ -539,6 +570,21 @@ class BracketSimulator:
                 slot_data.append(
                     (coords, base_text, color, strikethrough, actual_winner)
                 )
+
+                # For meta-seed nodes (First Four winners), also draw at the
+                # floating-game result slot next to the play-in box.
+                if node.left is not None and node.left.left is None and node.team_name:
+                    left_slot = len(self.slot_coordinates) - node.left.value
+                    right_slot = len(self.slot_coordinates) - node.right.value
+                    left_coords = self.slot_coordinates.get(left_slot, (0, 0))
+                    right_coords = self.slot_coordinates.get(right_slot, (0, 0))
+                    ff_x = left_coords[0]
+                    ff_y = max(left_coords[1], right_coords[1]) + 18
+                    ff_winner_text = f"> {node.seed[1:]} {node.team_name}"
+                    ff_color = "black"
+                    if hasattr(node, "next_round_style") and node.next_round_style:
+                        ff_color = node.next_round_style["color"]
+                    slot_data.append(((ff_x, ff_y), ff_winner_text, ff_color, False, None))
             else:
                 slot_data.append((coords, "", "black", False, None))
 

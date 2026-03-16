@@ -77,7 +77,9 @@ class EloRatingSystem:
         # Process each season
         current_ratings = {team_id: new_team_rating for team_id in all_teams}
 
+        total_seasons = len(seasons)
         for i, season in enumerate(seasons):
+            print(f"  Processing ELO season {season} ({i + 1}/{total_seasons})...")
             # Apply carry-over from previous season (or reset)
             if i > 0 and not reset_each_year:
                 for team_id in current_ratings:
@@ -118,11 +120,12 @@ class EloRatingSystem:
 
             # Process each game in the season
             season_games = all_games[all_games["Season"] == season]
+            total_games = len(season_games)
 
             # Get max day number for the season to calculate recency
             max_day_num = season_games["DayNum"].max()
 
-            for _, game in season_games.iterrows():
+            for game_index, (_, game) in enumerate(season_games.iterrows(), start=1):
                 w_team = game["WTeamID"]
                 l_team = game["LTeamID"]
                 day_num = game["DayNum"]
@@ -174,6 +177,13 @@ class EloRatingSystem:
                 self.team_elo_ratings[(season, l_team, day_num)] = current_ratings[
                     l_team
                 ]
+                if total_games > 500 and (
+                    game_index % 500 == 0 or game_index == total_games
+                ):
+                    print(
+                        f"    ELO games processed: {game_index}/{total_games} "
+                        f"({game_index / total_games:.1%})"
+                    )
 
         print(f"Calculated ELO ratings for {len(seasons)} seasons")
         return self.team_elo_ratings
@@ -199,29 +209,15 @@ class EloRatingSystem:
         team2_elo,
         home_advantage=100,
         location=None,
-        seed_diff=None,
-        tournament=False,
     ):
-        """Calculate win probability based on ELO ratings"""
+        """Calculate win probability based on ELO ratings (pure performance, no seed adjustment)."""
         # Adjust for home court if specified
         if location == "H":  # Team1 at home
             team1_elo += home_advantage
         elif location == "A":  # Team1 away
             team2_elo += home_advantage
 
-        # For tournament games, adjust based on seed difference if available
-        if tournament and seed_diff is not None:
-            # Higher seeds (lower numbers) get a boost
-            if seed_diff < 0:  # Team1 is higher seed
-                team1_elo += min(
-                    abs(seed_diff) * 15, 100
-                )  # Cap the boost at 100 points
-            elif seed_diff > 0:  # Team2 is higher seed
-                team2_elo += min(seed_diff * 15, 100)  # Cap the boost at 100 points
-
-        # Calculate win probability with adjusted ELO scale for more extreme predictions
-        # Standard ELO uses 400.0 as the scale factor, we'll adjust to 350.0 for more extreme predictions
-        scale_factor = 350.0
+        scale_factor = 400.0
         return 1.0 / (1.0 + math.pow(10, (team2_elo - team1_elo) / scale_factor))
 
     def predict_game(self, team1_id, team2_id, day_num, season, location=None):
@@ -242,25 +238,7 @@ class EloRatingSystem:
         team1_elo = self.get_team_elo(season, team1_id, day_num - 1)
         team2_elo = self.get_team_elo(season, team2_id, day_num - 1)
 
-        # Check if this is a tournament game
-        is_tournament = day_num >= 134  # Tournament starts around day 134
-
-        # Get seed information if it's a tournament game
-        seed_diff = None
-        if is_tournament:
-            team1_seed = self.data_manager.seed_lookup.get((season, team1_id), None)
-            team2_seed = self.data_manager.seed_lookup.get((season, team2_id), None)
-            if team1_seed is not None and team2_seed is not None:
-                seed_diff = team1_seed - team2_seed  # Positive if team2 is higher seed
-
-        # Calculate win probability with tournament and seed adjustments
-        return self.elo_win_probability(
-            team1_elo,
-            team2_elo,
-            location=location,
-            seed_diff=seed_diff,
-            tournament=is_tournament,
-        )
+        return self.elo_win_probability(team1_elo, team2_elo, location=location)
 
     def get_all_teams_elo(self, season, day_num=132):
         """Get ELO ratings for all teams at a specific point in time"""
