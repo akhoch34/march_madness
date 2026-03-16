@@ -203,6 +203,8 @@ Tests use `data/2026` as the data source and are automatically skipped if it's a
 
 Raw data is gitignored. Download from Kaggle and place under `data/<year>/`.
 
+Important: `MMasseyOrdinals.csv` for `data/2024/`, `data/2025/`, and `data/2026/` exceeds GitHub's file-size limit and is intentionally not tracked. After cloning or moving to a new machine, download or copy those files into the matching directories manually before running evaluations, tests, or submission generation.
+
 - `data/2026/` — cumulative dataset through 2025 (men's + women's). Use for all historical analysis and backtesting.
 - Year-specific directories (`data/2025/`, etc.) may contain only men's data.
 - 2022 data: flat under `data/2022/MDataFiles_Stage1/` and `MDataFiles_Stage2/`
