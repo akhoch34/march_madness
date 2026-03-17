@@ -1,6 +1,10 @@
 .venv
-data
-notebooks/2022_womens
-notebooks/2022_xgb/.ipynb_checkpoints
 *.pyc
-*output/
+**/.ipynb_checkpoints/
+__pycache__/
+*.egg-info/
+.DS_Store
+.claude/settings.local.json
+data/2024/MMasseyOrdinals.csv
+data/2025/MMasseyOrdinals.csv
+data/2026/MMasseyOrdinals.csv

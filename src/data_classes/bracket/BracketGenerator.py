@@ -1,5 +1,6 @@
 import math
 import os
+import re
 from typing import Tuple
 from PIL import Image, ImageDraw, ImageFont
 from binarytree import Node
@@ -341,11 +342,33 @@ class BracketSimulator:
                 else:
                     prob_text = ""
 
-                text = f"{node.seed[1:]} {node.team_name}{prob_text}"
+                # Mark the predicted winner in First Four (play-in) games.
+                # A First Four leaf is a leaf whose parent is a meta-seed node
+                # (i.e. parent has children → parent.left is not None).
+                is_ff_leaf = (
+                    node.left is None
+                    and node.parent is not None
+                    and node.parent.left is not None
+                )
+                winner_mark = "> " if (is_ff_leaf and node.win_prob is not None and node.win_prob > 0.5) else ""
+                text = f"{winner_mark}{node.seed[1:]} {node.team_name}{prob_text}"
             else:
                 text = ""
 
             slot_data.append((coords, text))
+
+            # For meta-seed nodes (First Four winners), also draw the winner
+            # at the floating-game result slot (the blank line next to the play-in box).
+            # A meta-seed node is internal (has children) but its children are leaves.
+            if node.left is not None and node.left.left is None and node.team_name:
+                left_slot = len(self.slot_coordinates) - node.left.value
+                right_slot = len(self.slot_coordinates) - node.right.value
+                left_coords = self.slot_coordinates.get(left_slot, (0, 0))
+                right_coords = self.slot_coordinates.get(right_slot, (0, 0))
+                ff_x = left_coords[0]
+                ff_y = max(left_coords[1], right_coords[1]) + 18
+                ff_text = f"> {node.seed[1:]} {node.team_name}"
+                slot_data.append(((ff_x, ff_y), ff_text))
 
         return slot_data
 
@@ -494,12 +517,13 @@ class BracketSimulator:
                         correct_predictions += 1 if prediction_correct else 0
                         total_predictions += 1
 
-                        # Advance the ACTUAL winner to the parent node
+                        # Advance the PREDICTED winner to the parent node
+                        # (same path as bracket.png; annotations show where prediction was wrong)
                         if left_node.parent is not None:
                             parent = left_node.parent
-                            parent.team_id = actual_winner.team_id
-                            parent.seed = actual_winner.seed
-                            parent.team_name = actual_winner.team_name
+                            parent.team_id = predicted_winner.team_id
+                            parent.seed = predicted_winner.seed
+                            parent.team_name = predicted_winner.team_name
 
         # Generate the slot data for visualization
         slot_data = []
@@ -511,6 +535,14 @@ class BracketSimulator:
             coords = self.slot_coordinates.get(slot_num, (0, 0))
 
             if node.team_name:
+                # Mark actual winner in First Four (play-in) games.
+                is_ff_leaf = (
+                    node.left is None
+                    and node.parent is not None
+                    and node.parent.left is not None
+                )
+                ff_winner_mark = "> " if (is_ff_leaf and node.team_id is not None and node.parent.team_id == node.team_id) else ""
+
                 # Base text always includes seed and team name
                 if hasattr(node, "next_round_style") and node.next_round_style:
                     if node.next_round_style["strikethrough"]:
@@ -518,9 +550,9 @@ class BracketSimulator:
                         base_text = node.next_round_style["predicted_team"]
                     else:
                         # For correct predictions or non-styled nodes, use actual team name
-                        base_text = f"{node.seed[1:]} {node.team_name}"
+                        base_text = f"{ff_winner_mark}{node.seed[1:]} {node.team_name}"
                 else:
-                    base_text = f"{node.seed[1:]} {node.team_name}"
+                    base_text = f"{ff_winner_mark}{node.seed[1:]} {node.team_name}"
 
                 # Add probability if available
                 if node.parent is not None and node.win_prob is not None:
@@ -539,6 +571,21 @@ class BracketSimulator:
                 slot_data.append(
                     (coords, base_text, color, strikethrough, actual_winner)
                 )
+
+                # For meta-seed nodes (First Four winners), also draw at the
+                # floating-game result slot next to the play-in box.
+                if node.left is not None and node.left.left is None and node.team_name:
+                    left_slot = len(self.slot_coordinates) - node.left.value
+                    right_slot = len(self.slot_coordinates) - node.right.value
+                    left_coords = self.slot_coordinates.get(left_slot, (0, 0))
+                    right_coords = self.slot_coordinates.get(right_slot, (0, 0))
+                    ff_x = left_coords[0]
+                    ff_y = max(left_coords[1], right_coords[1]) + 18
+                    ff_winner_text = f"> {node.seed[1:]} {node.team_name}"
+                    ff_color = "black"
+                    if hasattr(node, "next_round_style") and node.next_round_style:
+                        ff_color = node.next_round_style["color"]
+                    slot_data.append(((ff_x, ff_y), ff_winner_text, ff_color, False, None))
             else:
                 slot_data.append((coords, "", "black", False, None))
 
@@ -551,6 +598,129 @@ class BracketSimulator:
             "accuracy": accuracy,
             "correct": correct_predictions,
             "total": total_predictions,
+        }
+
+    def get_bracket_layout(self, method: str = "ensemble", season: int = None, simulate: bool = True) -> dict:
+        """Return structured layout dict consumed by bracket_viz._draw_layout_bracket().
+
+        Parameters:
+        method: Prediction method ('elo', 'ml', 'ensemble')
+        season: Season to use (updates current_season if different)
+        simulate: If True, calls simulate_bracket(). If False, assumes simulate_historical_bracket()
+                  has already been called and the tree nodes are already populated.
+        """
+        # 1. Update season and rebuild tree if needed
+        if season is not None and season != self.current_season:
+            self.current_season = season
+            self.build_bracket_tree(season)
+
+        # 2. Simulate if requested
+        if simulate:
+            self.simulate_bracket(method=method)
+        # else: tree already populated by simulate_historical_bracket()
+
+        # 3. Get tree levels (levels[d] = list of all nodes at depth d, left-to-right)
+        levels = self.bracket_tree.levels
+
+        # 4. Determine entry_depth: the depth where Round-1 participants live.
+        #    Play-in teams (First Four) are at the deepest level (≤ 8 nodes for 4 games).
+        #    Round-1 participants are one level above that.
+        if len(levels[-1]) <= 8:
+            entry_depth = len(levels) - 2
+        else:
+            entry_depth = len(levels) - 1
+
+        # 5. Build region_map: node.value → region char (W/X/Y/Z or None)
+        #    Leaf seed strings like "W01", "X16b" start with the region letter.
+        #    Internal slots like "R2W1" start with 'R' — propagate region from children.
+        region_map = {}
+
+        def _leaf_region(node):
+            s = self.seed_slot_map.get(node.value, "")
+            return s[0] if s and s[0] in "WXYZ" else None
+
+        for depth in range(len(levels) - 1, -1, -1):
+            for node in levels[depth]:
+                if node.left is None:
+                    region_map[node.value] = _leaf_region(node)
+                else:
+                    r = _leaf_region(node)
+                    if r:
+                        region_map[node.value] = r
+                    else:
+                        lr = region_map.get(node.left.value) if node.left else None
+                        rr = region_map.get(node.right.value) if node.right else None
+                        region_map[node.value] = lr if lr == rr else None
+
+        # 6. Helper: node → team_info dict expected by bracket_viz
+        def _ti(node):
+            if not node or not node.team_name:
+                return {"seed": None, "team_name": "TBD", "win_prob": None}
+            seed_str = str(node.seed) if node.seed else ""
+            # Extract numeric seed from strings like "W01", "X16b", "R2W1"
+            tail = seed_str[1:] if len(seed_str) > 1 else seed_str
+            m = re.search(r"\d+", tail)
+            seed_int = int(m.group()) if m else None
+            return {"seed": seed_int, "team_name": node.team_name, "win_prob": node.win_prob}
+
+        # 7. Build per-region games for rounds 1–4
+        region_games: dict = {"W": [], "X": [], "Y": [], "Z": []}
+        for round_num in range(1, 5):
+            depth = entry_depth - (round_num - 1)
+            if depth < 0 or depth >= len(levels):
+                continue
+            level = levels[depth]
+            for i in range(0, len(level) - 1, 2):
+                node_a = level[i]
+                node_b = level[i + 1]
+                region = region_map.get(node_a.value) or region_map.get(node_b.value)
+                if region not in region_games:
+                    continue
+                region_games[region].append({
+                    "round": round_num,
+                    "top": _ti(node_a),
+                    "bot": _ti(node_b),
+                })
+
+        # 8. Play-in games: meta-seed nodes at entry_depth that have play-in leaves
+        play_in = []
+        if len(levels[-1]) <= 8:
+            for node in levels[entry_depth]:
+                if node.left is not None and node.left.left is None:
+                    region = region_map.get(node.value)
+                    play_in.append({
+                        "region": region,
+                        "top": _ti(node.left),
+                        "bot": _ti(node.right),
+                    })
+
+        # 9. Final Four: levels[2] = 4 regional champions
+        final_four = []
+        if len(levels) >= 3:
+            ff_nodes = levels[2]
+            if len(ff_nodes) >= 2:
+                final_four.append({"top": _ti(ff_nodes[0]), "bot": _ti(ff_nodes[1])})
+            if len(ff_nodes) >= 4:
+                final_four.append({"top": _ti(ff_nodes[2]), "bot": _ti(ff_nodes[3])})
+
+        # 10. Championship
+        championship = {}
+        if len(levels) >= 2:
+            finalists = levels[1]
+            championship = {
+                "top": _ti(finalists[0]) if len(finalists) > 0 else None,
+                "bot": _ti(finalists[1]) if len(finalists) > 1 else None,
+                "winner": _ti(levels[0][0]),
+            }
+
+        return {
+            "W": region_games["W"],
+            "X": region_games["X"],
+            "Y": region_games["Y"],
+            "Z": region_games["Z"],
+            "final_four": final_four,
+            "championship": championship,
+            "play_in": play_in,
         }
 
     # Shared helper methods
