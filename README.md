@@ -12,10 +12,11 @@ poetry install && poetry shell
 
 ## Prediction Methods
 
-Ten methods are implemented in `src/approaches/notebook_models.py`. Two additional ELO-based methods exist via the `Predictor` class but are excluded from defaults due to poor historical Brier scores (~0.30).
+Eleven methods are implemented in `src/approaches/notebook_models.py`. Two additional ELO-based methods exist via the `Predictor` class but are excluded from defaults due to poor historical Brier scores (~0.30).
 
 | Method | How It Works | Key Features | Blend |
 |--------|-------------|--------------|-------|
+| `modeh7` | **2025 Kaggle 1st-place solution.** LOSO XGBoost regression on point differential, calibrated with a k=5 spline. Trains on combined M+W data with a `men_women` flag. Symmetric dataset doubling with overtime adjustment. Separate absolute T1/T2 features (not diffs). ELO base=1000 K=100 width=400. Ridge GLM quality on tournament-adjacent teams. | Seed, box-score season avgs (14 stats × T1 + T2 + opponent), ELO, GLM quality, men_women | 100% LOSO ensemble → spline calibration |
 | `seed_spline_only` | `UnivariateSpline` fitted on (SeedDiff, result) pairs from all training tourney games. Zero ML. | Seed difference only | 100% spline |
 | `baseline_massey` | XGBoost on win%, seed diff, Massey rank. Spline-dominant blend. | Win% (overall/home/away/neutral), SeedDiff, normalized Massey rank | 30% XGB + 70% spline |
 | `massey_direct` | Logistic regression trained on per-system Massey rank differences. Women's fallback: seed spline only. | SeedDiff + per-system rank diff (POM, SAG, DOK, MOR, MAS, RPI) | 25% LR + 75% spline |
@@ -33,13 +34,14 @@ Ten methods are implemented in `src/approaches/notebook_models.py`. Two addition
 
 ## Historical Performance
 
-Results from `output/eval_results.csv` (Brier score, lower is better).
+Results from `output/eval_results.csv` (Brier score, lower is better). Refresh with `poetry run python utils/eval_framework.py --report-only`.
 
 **Men's (2022–2025):**
 
 | Method | 2022 | 2023 | 2024 | 2025 | Avg |
 |--------|------|------|------|------|-----|
-| `xgb_ensemble` | 0.2173 | 0.2116 | 0.1878 | 0.1566 | **0.1933** |
+| `modeh7` | 0.2364 | 0.2032 | 0.1878 | **0.1397** | **0.1918** |
+| `xgb_ensemble` | 0.2173 | 0.2116 | 0.1878 | 0.1566 | 0.1933 |
 | `seed_matchup_calibration` | 0.2124 | 0.2157 | 0.1902 | 0.1569 | 0.1938 |
 | `recency_xgb` | 0.2173 | 0.2186 | 0.1840 | 0.1566 | 0.1941 |
 | `xgb_ensemble_v2` | 0.2173 | 0.2152 | 0.1886 | 0.1561 | 0.1943 |
@@ -53,10 +55,13 @@ Results from `output/eval_results.csv` (Brier score, lower is better).
 
 | Method | 2023 | 2024 | 2025 | Avg |
 |--------|------|------|------|-----|
-| `recency_xgb` | 0.1728 | 0.1186 | 0.1222 | **0.1379** |
+| `modeh7` | 0.1654 | 0.1252 | **0.1075** | **0.1327** |
+| `recency_xgb` | 0.1728 | 0.1186 | 0.1222 | 0.1379 |
 | `xgb_ensemble` | 0.1725 | 0.1233 | 0.1185 | 0.1381 |
 | `xgb_ensemble_v2` | 0.1729 | 0.1229 | 0.1217 | 0.1391 |
 | `seed_matchup_calibration` | 0.1761 | 0.1245 | 0.1203 | 0.1403 |
+
+> **Note:** `modeh7` takes #1 on both leaderboards. Its 2022 M score (0.2364) is weaker than the pack because women's data isn't available for `data/2022/`, halving its training set for that season.
 
 ## CLI Tools
 
@@ -68,7 +73,7 @@ poetry run python utils/eval_framework.py
 
 # Specific subset:
 poetry run python utils/eval_framework.py \
-    --methods xgb_ensemble xgb_ensemble_v2 seed_matchup_calibration \
+    --methods modeh7 xgb_ensemble seed_matchup_calibration \
     --years 2024 2025 --genders M
 
 # View existing results without regenerating:
@@ -80,7 +85,7 @@ poetry run python utils/eval_framework.py --include-slow
 
 All flags:
 ```
---methods METHOD [...]   Methods to run (default: 9 fast methods)
+--methods METHOD [...]   Methods to run (default: 10 fast methods, including modeh7)
 --years YEAR [...]       Tournament seasons (default: 2022 2023 2024 2025)
 --genders M W            Genders to include (default: both)
 --base-data-dir PATH     Data root (default: data/)
@@ -93,14 +98,54 @@ All flags:
 
 Output: `output/eval_results.csv`
 
-### Generate 2026 submission
+### Build a Kaggle submission (recommended workflow)
+
+The cleanest path to a submission: evaluate all methods, then blend the best ones into a single Kaggle-ready CSV.
+
+**Step 1 — Evaluate (or refresh) all methods:**
+```bash
+poetry run python utils/eval_framework.py --years 2023 2024 2025
+```
+
+**Step 2 — Generate per-method prediction CSVs for the target season:**
+```bash
+poetry run python utils/generate_submission.py --season 2026
+```
+
+**Step 3 — Blend the top methods into one Kaggle CSV:**
+```bash
+# Equal blend of top 2 methods per gender (default):
+poetry run python utils/kaggle_submission.py --season 2026
+
+# Weighted blend (inverse-Brier) of top 3, ranked on recent years:
+poetry run python utils/kaggle_submission.py \
+    --season 2026 \
+    --strategy weighted \
+    --top-n 3 \
+    --years-for-ranking 2024 2025
+```
+
+All `kaggle_submission.py` flags:
+```
+--season N                    Target season year (required)
+--top-n N                     Methods to blend per gender (default: 2)
+--strategy equal|weighted     equal = uniform weights; weighted = inverse-Brier (default: equal)
+--years-for-ranking Y [...]   Years used to rank methods (default: 2024 2025)
+--eval-results PATH           Path to eval_results.csv (default: output/eval_results.csv)
+--output-dir PATH             Output root (default: output/)
+```
+
+Output: `output/{season}/kaggle_submission_{season}.csv`
+
+### Generate a single submission with a specific method
 
 ```bash
-# Generate submission using top methods from eval_results.csv:
-poetry run python utils/generate_2026_submission.py
+# Generate using top methods from eval_results.csv:
+poetry run python utils/generate_submission.py --season 2026
 
 # Custom strategy:
-poetry run python utils/generate_2026_submission.py \
+poetry run python utils/generate_submission.py \
+    --season 2026 \
     --strategy average_top3 \
     --years-for-ranking 2024 2025 \
     --top-n 3
@@ -108,17 +153,49 @@ poetry run python utils/generate_2026_submission.py \
 
 All flags:
 ```
+--season N                   Target season year (required)
 --eval-results PATH          Path to eval_results.csv (default: output/eval_results.csv)
 --top-n N                    Number of top methods to use (default: 3)
 --strategy top1|average_top3 Combination strategy (default: top1)
 --years-for-ranking Y [...]  Which years to rank on (default: all in eval_results)
---data-dir PATH              Data directory for 2026 (default: data/2026)
+--data-dir PATH              Data directory (default: data/{season})
 --output-dir PATH            Output root (default: output/)
 --no-skip-existing           Regenerate even if CSV exists
---season N                   Target season (default: 2026)
+--no-brackets                Skip bracket PNG generation
 ```
 
-Output: `output/2026/submission_2026_{strategy}.csv`
+Output: `output/{season}/submission_{season}_{strategy}.csv`
+
+### Generate bracket PNGs from existing submissions
+
+Renders bracket visualizations from any already-generated submission CSV — no model retraining needed.
+
+```bash
+# All years, both genders, all found submissions:
+poetry run python utils/generate_brackets_from_submissions.py
+
+# Specific year/gender/method:
+poetry run python utils/generate_brackets_from_submissions.py \
+    --years 2025 --genders M --methods modeh7 xgb_ensemble
+
+# Regenerate even if PNGs already exist:
+poetry run python utils/generate_brackets_from_submissions.py \
+    --years 2025 --no-skip-existing
+```
+
+All flags:
+```
+--years YEAR [...]       Seasons to process (default: 2022 2023 2024 2025)
+--genders M W            Genders (default: both)
+--methods METHOD [...]   Only process these methods (default: all found)
+--data-dir PATH          Cumulative data root (default: data/2026)
+--output-dir PATH        Output root (default: output/)
+--no-skip-existing       Regenerate even if bracket.png already exists
+```
+
+Output:
+- `output/{year}/brackets/{method}/{gender}/bracket.png` — predicted bracket
+- `output/{year}/brackets/{method}/{gender}/bracket_historical.png` — predicted vs actual (2022–2025)
 
 ### Generate historical artifacts
 
@@ -136,10 +213,6 @@ All flags:
 --years YEAR [...]       Seasons to process (default: 2022 2023 2024 2025)
 --genders M W            Genders (default: both)
 --methods METHOD [...]   Methods (default: elo, elo_enhanced, baseline_massey, xgb_ensemble)
-                         All available: elo, elo_enhanced, ensemble, baseline_massey,
-                         xgb_ensemble, xgb_ensemble_v2, massey_direct, seed_spline_only,
-                         recency_xgb, massey_blend, poisson_margin, meta_ensemble,
-                         seed_matchup_calibration
 --base-data-dir PATH     Data root (default: data/)
 --lookback-years N       Training window in years (default: 8)
 --no-skip-existing       Regenerate existing artifacts
@@ -155,12 +228,6 @@ Output: `output/{year}/submissions/`, `output/{year}/brackets/`, `output/scoring
 # Download ESPN team logos for bracket visualization:
 poetry run python utils/download_logos.py
 # → data/logos/{M|W}/{team_id}.png
-
-# Compare historical model performance across archived submissions:
-poetry run python utils/compare_historical_models.py
-
-# Split combined M+W submission into separate files:
-poetry run python utils/split_submission_file.py <submission.csv>
 ```
 
 ## Notebooks

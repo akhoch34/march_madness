@@ -110,7 +110,8 @@ def _build_predictor(
 
 
 def _submission_path(year: int, method: str, gender: str, artifact_suffix: str = "") -> str:
-    path = os.path.join(OUTPUT_ROOT, str(year), "submissions")
+    method_dir = f"{method}_{artifact_suffix}" if artifact_suffix else method
+    path = os.path.join(OUTPUT_ROOT, str(year), method_dir, "submissions")
     os.makedirs(path, exist_ok=True)
     suffix = f"_{artifact_suffix}" if artifact_suffix else ""
     return os.path.join(path, f"{method}{suffix}_{gender}.csv")
@@ -118,14 +119,14 @@ def _submission_path(year: int, method: str, gender: str, artifact_suffix: str =
 
 def _bracket_path(year: int, method: str, gender: str, artifact_suffix: str = "") -> str:
     method_dir = f"{method}_{artifact_suffix}" if artifact_suffix else method
-    path = os.path.join(OUTPUT_ROOT, str(year), "brackets", method_dir, gender)
+    path = os.path.join(OUTPUT_ROOT, str(year), method_dir, "brackets", gender)
     os.makedirs(path, exist_ok=True)
     return os.path.join(path, "bracket.png")
 
 
 def _bracket_html_path(year: int, method: str, gender: str, artifact_suffix: str = "") -> str:
     method_dir = f"{method}_{artifact_suffix}" if artifact_suffix else method
-    path = os.path.join(OUTPUT_ROOT, str(year), "brackets", method_dir, gender)
+    path = os.path.join(OUTPUT_ROOT, str(year), method_dir, "brackets", gender)
     os.makedirs(path, exist_ok=True)
     return os.path.join(path, "bracket.html")
 

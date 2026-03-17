@@ -4,7 +4,6 @@ from .MLModel import MarchMadnessMLModel
 from .Predictor import MarchMadnessPredictor
 from .TeamStatsCalculator import TeamStatsCalculator
 from .TournamentVisualizer import TournamentVisualizer
-from .BradleyTerry import BradleyTerryModel
 
 __all__ = [
     'MarchMadnessDataManager',
@@ -13,5 +12,4 @@ __all__ = [
     'MarchMadnessPredictor',
     'TeamStatsCalculator',
     'TournamentVisualizer',
-    'BradleyTerryModel',
 ]

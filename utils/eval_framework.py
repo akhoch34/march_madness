@@ -51,6 +51,7 @@ _METHOD_REGISTRY = {
     "recency_xgb": "notebook",
     "poisson_margin": "notebook",
     "seed_matchup_calibration": "notebook",
+    "modeh7": "notebook",         # LOSO XGBoost regressor (2025 Kaggle 1st-place)
     "meta_ensemble": "notebook",  # slow — OOF loop
     # predictor-backed methods (require ELO + ML initialization)
     "elo": "predictor",
@@ -67,6 +68,7 @@ _DEFAULT_METHODS = [
     "recency_xgb",
     "poisson_margin",
     "seed_matchup_calibration",
+    "modeh7",
 ]
 
 _SLOW_METHODS = {"meta_ensemble", "elo", "elo_enhanced"}
@@ -121,7 +123,7 @@ class _PredictorCache:
 # ── Core generation ───────────────────────────────────────────────────────────
 
 def _submission_path(output_dir: str, season: int, method: str, gender: str) -> str:
-    sub_dir = os.path.join(output_dir, str(season), "submissions")
+    sub_dir = os.path.join(output_dir, str(season), method, "submissions")
     os.makedirs(sub_dir, exist_ok=True)
     return os.path.join(sub_dir, f"{method}_{gender}.csv")
 
@@ -171,6 +173,30 @@ def _score_one(sub_df: pd.DataFrame, scoring_data_dir: str, season: int, gender:
 
 # ── Main eval loop ────────────────────────────────────────────────────────────
 
+def _add_skill_scores(df: pd.DataFrame) -> pd.DataFrame:
+    """Add skill_score column: fractional improvement over seed_spline_only baseline.
+
+    skill_score = (spline_brier - model_brier) / spline_brier
+
+    Higher is better. NaN when seed_spline_only is absent for a given year/gender.
+    """
+    if df.empty or "brier_score" not in df.columns:
+        return df
+
+    df = df.copy()
+    method_col = "method" if "method" in df.columns else "model"
+    spline_rows = df[df[method_col] == "seed_spline_only"][["year", "gender", "brier_score"]]
+    if spline_rows.empty:
+        df["skill_score"] = float("nan")
+        return df
+
+    spline_map = spline_rows.rename(columns={"brier_score": "_spline_brier"})
+    df = df.merge(spline_map, on=["year", "gender"], how="left")
+    df["skill_score"] = (df["_spline_brier"] - df["brier_score"]) / df["_spline_brier"]
+    df = df.drop(columns=["_spline_brier"])
+    return df
+
+
 def run_eval(
     methods: list[str],
     years: list[int],
@@ -193,13 +219,13 @@ def run_eval(
         Root data directory. Prediction data comes from base_data_dir/{year}/.
         Scoring data comes from base_data_dir/{year+1}/.
     output_dir : str
-        Root output directory. Submissions saved to output_dir/{year}/submissions/.
+        Root output directory. Submissions saved to output_dir/{year}/{method}/submissions/.
     skip_existing : bool
         If True, reuse existing submission CSVs instead of regenerating.
 
     Returns
     -------
-    pd.DataFrame with columns: year, method, gender, brier_score, accuracy, n_games
+    pd.DataFrame with columns: year, method, gender, brier_score, accuracy, n_games, skill_score
     """
     predictor_cache = _PredictorCache()
     rows = []
@@ -275,7 +301,8 @@ def run_eval(
                     f"acc={stats['accuracy']:.3f} games={stats['n_games']}"
                 )
 
-    return pd.DataFrame(rows)
+    result = pd.DataFrame(rows)
+    return _add_skill_scores(result)
 
 
 # ── Leaderboard helpers ───────────────────────────────────────────────────────
@@ -307,16 +334,34 @@ def print_leaderboard(results_df: pd.DataFrame, top_n: int = 15) -> None:
         if lb.empty:
             continue
 
-        print(f"\n{'=' * 72}")
+        # Compute avg_skill_score per method if available
+        has_skill = "skill_score" in gdf.columns and gdf["skill_score"].notna().any()
+        if has_skill:
+            method_col = "method" if "method" in gdf.columns else "model"
+            skill_avg = (
+                gdf.groupby(method_col)["skill_score"]
+                .mean()
+                .rename("avg_skill")
+                .reset_index()
+                .rename(columns={method_col: "model"})
+            )
+            lb = lb.merge(skill_avg, on="model", how="left")
+
+        print(f"\n{'=' * 80}")
         print(f"LEADERBOARD — {gender_label} (top {top_n})")
-        print(f"Lower brier = better. Random baseline ≈ 0.25")
-        print(f"{'=' * 72}")
+        print(f"Lower brier = better. skill_score = improvement over seed baseline (higher = better).")
+        print(f"{'=' * 80}")
         year_cols = sorted([c for c in lb.columns if c.isdigit()])
-        header = f"{'Method':<35}{'AvgBrier':>10}{'Rank':>8}{'N':>5}" + "".join(f"{y:>8}" for y in year_cols)
+        skill_hdr = f"{'AvgSkill':>10}" if has_skill else ""
+        header = f"{'Method':<35}{'AvgBrier':>10}{skill_hdr}{'Rank':>8}{'N':>5}" + "".join(f"{y:>8}" for y in year_cols)
         print(header)
-        print("-" * 72)
+        print("-" * 80)
         for _, row in lb.head(top_n).iterrows():
-            line = f"{str(row['model']):<35}{row['avg_brier']:>10.4f}{row.get('avg_rank', 0):>8.1f}{int(row['n_years']):>5}"
+            skill_col = ""
+            if has_skill:
+                sv = row.get("avg_skill", float("nan"))
+                skill_col = f"{sv:>10.4f}" if isinstance(sv, float) and not np.isnan(sv) else f"{'—':>10}"
+            line = f"{str(row['model']):<35}{row['avg_brier']:>10.4f}{skill_col}{row.get('avg_rank', 0):>8.1f}{int(row['n_years']):>5}"
             for y in year_cols:
                 val = row.get(y, float("nan"))
                 if isinstance(val, float) and not np.isnan(val):
@@ -324,7 +369,7 @@ def print_leaderboard(results_df: pd.DataFrame, top_n: int = 15) -> None:
                 else:
                     line += f"{'—':>8}"
             print(line)
-        print("=" * 72)
+        print("=" * 80)
 
 
 def print_per_year_breakdown(results_df: pd.DataFrame) -> None:
@@ -446,6 +491,8 @@ def main():
         if results_df.empty:
             print(f"No eval_results.csv found in {output_dir}. Run without --report-only first.")
             sys.exit(1)
+        if "skill_score" not in results_df.columns:
+            results_df = _add_skill_scores(results_df)
         print_leaderboard(results_df, top_n=args.top_n)
         print_per_year_breakdown(results_df)
         return

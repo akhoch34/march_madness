@@ -38,6 +38,8 @@ def generate_notebook_submission(method: str, data_dir: str, season: int, gender
         return _generate_meta_ensemble_submission(data_dir, season, gender)
     if method == "seed_matchup_calibration":
         return _generate_seed_matchup_calibration_submission(data_dir, season, gender)
+    if method == "modeh7":
+        return _generate_modeh7_submission(data_dir, season, gender)
     raise ValueError(f"Unsupported notebook-backed method: {method}")
 
 
@@ -1284,4 +1286,678 @@ def _generate_seed_matchup_calibration_submission(data_dir: str, season: int, ge
         predictions.append({"ID": gid, "Pred": final_pred})
         _log_progress("  Seed calibration predictions", index, total_matchups)
 
+    return _build_submission_from_predictions(season, predictions)
+
+
+# ── modeh7 (2025 Kaggle 1st-place adaptation) ─────────────────────────────────
+# Faithful port of the original notebook. Key design choices:
+#   - M and W data combined in one model; men_women flag as a feature
+#   - Symmetric dataset doubling with overtime adjustment
+#   - Separate T1/T2 avg-stat features (not differences)
+#   - ELO: base=1000, width=400, K=100
+#   - GLM quality via Ridge on tournament-adjacent teams
+#   - LOSO XGBoost regressor on PointDiff
+#   - Spline calibration k=5, clipped to [-25, 25]
+
+# Stat columns used in the notebook's box-score feature set
+_M7_STAT_COLS = [
+    "Score", "FGM", "FGA", "FGM3", "FGA3", "FTM", "FTA",
+    "OR", "DR", "Ast", "TO", "Stl", "Blk", "PF",
+]
+
+_M7_FEATURES = (
+    ["men_women", "T1_seed", "T2_seed", "Seed_diff"]
+    + [f"T1_avg_{c}" for c in _M7_STAT_COLS]
+    + [f"T1_avg_opponent_{c}" for c in _M7_STAT_COLS]
+    + ["T1_avg_PointDiff"]
+    + [f"T2_avg_{c}" for c in _M7_STAT_COLS]
+    + [f"T2_avg_opponent_{c}" for c in _M7_STAT_COLS]
+    + ["T2_avg_PointDiff"]
+    + ["T1_elo", "T2_elo", "elo_diff"]
+    + ["T1_quality", "T2_quality"]
+)
+
+_M7_PARAMS = {
+    "objective": "reg:squarederror", "booster": "gbtree",
+    "eta": 0.0093, "subsample": 0.6, "colsample_bynode": 0.8,
+    "num_parallel_tree": 2, "min_child_weight": 4, "max_depth": 4,
+    "tree_method": "hist", "grow_policy": "lossguide", "max_bin": 38,
+    "verbosity": 0,
+}
+_M7_NUM_ROUNDS = 704
+_M7_SPLINE_CLIP = 25   # clip point-diff before spline
+
+
+def _m7_load_raw(data_dir: str, season: int) -> tuple:
+    """Load M and W raw DataFrames for modeh7. Returns (M_reg_det, M_tourney_det, M_seeds,
+    W_reg_det, W_tourney_det, W_seeds). Any missing DataFrame returned as empty."""
+    def _safe_load(data_dir, gender):
+        try:
+            dm = MarchMadnessDataManager(data_dir, gender=gender, current_season=season)
+            dm.load_data()
+            reg_det   = dm.data.get("regular_season_detailed", pd.DataFrame())
+            tour_det  = dm.data.get("tourney_detailed", pd.DataFrame())
+            reg_comp  = dm.data.get("regular_season", pd.DataFrame())
+            tourney   = dm.data.get("tourney_results", pd.DataFrame())
+            seeds_df  = dm.data.get("tourney_seeds", pd.DataFrame())
+            # Prefer detailed; fall back to compact
+            if reg_det is None or reg_det.empty:
+                reg_det = reg_comp
+            if tour_det is None or tour_det.empty:
+                tour_det = tourney
+            return reg_det, tour_det, seeds_df
+        except Exception as e:
+            print(f"  [warn] Could not load {gender} data: {e}")
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+    m_reg, m_tour, m_seeds = _safe_load(data_dir, "M")
+    w_reg, w_tour, w_seeds = _safe_load(data_dir, "W")
+    return m_reg, m_tour, m_seeds, w_reg, w_tour, w_seeds
+
+
+def _m7_prepare(df: pd.DataFrame) -> pd.DataFrame:
+    """Symmetric dataset doubling with overtime adjustment (notebook cell 9)."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    stat_cols = [c for c in [
+        "Score", "FGM", "FGA", "FGM3", "FGA3", "FTM", "FTA",
+        "OR", "DR", "Ast", "TO", "Stl", "Blk", "PF",
+    ] if f"W{c}" in df.columns]
+
+    keep_cols = (
+        ["Season", "DayNum", "NumOT", "WTeamID", "LTeamID"]
+        + [f"W{c}" for c in stat_cols]
+        + [f"L{c}" for c in stat_cols]
+    )
+    # deduplicate while preserving order
+    seen = set()
+    keep_cols = [c for c in keep_cols if c in df.columns and not (c in seen or seen.add(c))]
+    df = df[keep_cols].copy().reset_index(drop=True)
+
+    # Overtime adjustment (use numpy to avoid index alignment issues)
+    num_ot = df["NumOT"].values if "NumOT" in df.columns else np.zeros(len(df))
+    adjot = (40 + 5 * num_ot) / 40
+    for base in stat_cols:
+        for prefix in ("W", "L"):
+            col = f"{prefix}{base}"
+            if col in df.columns:
+                df[col] = df[col].values / adjot
+    if "WScore" in df.columns:
+        df["WScore"] = df["WScore"].values / adjot
+    if "LScore" in df.columns:
+        df["LScore"] = df["LScore"].values / adjot
+
+    # Build T1_ = winner, T2_ = loser
+    w_cols = {f"W{c}": f"T1_{c}" for c in stat_cols + ["TeamID"]}
+    l_cols = {f"L{c}": f"T2_{c}" for c in stat_cols + ["TeamID"]}
+    df_a = df.rename(columns={**w_cols, **l_cols})
+
+    # Swapped: T1_ = loser, T2_ = winner
+    w_cols2 = {f"W{c}": f"T2_{c}" for c in stat_cols + ["TeamID"]}
+    l_cols2 = {f"L{c}": f"T1_{c}" for c in stat_cols + ["TeamID"]}
+    df_b = df.rename(columns={**w_cols2, **l_cols2})
+
+    out = pd.concat([df_a, df_b], ignore_index=True)
+    out["PointDiff"] = out["T1_Score"] - out["T2_Score"]
+    out["win"] = (out["PointDiff"] > 0).astype(int)
+    out["men_women"] = out["T1_TeamID"].apply(lambda t: 1 if str(int(t)).startswith("1") else 0)
+    return out
+
+
+def _m7_season_averages(regular_doubled: pd.DataFrame) -> tuple:
+    """Compute per-(Season, T1_TeamID) averages. Returns (ss_T1, ss_T2) DataFrames."""
+    stat_cols = [c for c in _M7_STAT_COLS if f"T1_{c}" in regular_doubled.columns]
+    t1_stats = [f"T1_{c}" for c in stat_cols]
+    t2_stats = [f"T2_{c}" for c in stat_cols]
+    box_cols = t1_stats + t2_stats + ["PointDiff"]
+    available = [c for c in box_cols if c in regular_doubled.columns]
+
+    ss = (
+        regular_doubled.groupby(["Season", "T1_TeamID"])[available]
+        .mean()
+        .reset_index()
+    )
+
+    def _rename(col):
+        return col.replace("T1_", "").replace("T2_", "opponent_")
+
+    ss_T1 = ss.copy()
+    ss_T1.columns = (
+        ["Season", "T1_TeamID"]
+        + [f"T1_avg_{_rename(c)}" for c in available]
+    )
+
+    ss_T2 = ss.copy()
+    ss_T2.columns = (
+        ["Season", "T2_TeamID"]
+        + [f"T2_avg_{_rename(c)}" for c in available]
+    )
+
+    return ss_T1, ss_T2
+
+
+def _m7_elo(regular_doubled: pd.DataFrame, seeds_df: pd.DataFrame) -> tuple:
+    """ELO ratings from regular season wins. base=1000, width=400, K=100.
+    Only processes win==1 rows (actual winners as T1).
+    Returns (elos_T1, elos_T2) DataFrames."""
+    base_elo = 1000.0
+    elo_width = 400.0
+    k_factor = 100.0
+
+    def expected(ra, rb):
+        return 1.0 / (1.0 + 10 ** ((rb - ra) / elo_width))
+
+    seasons = sorted(seeds_df["Season"].unique())
+    elo_rows = []
+
+    for s in seasons:
+        ss = regular_doubled[(regular_doubled["Season"] == s) & (regular_doubled["win"] == 1)].reset_index(drop=True)
+        if ss.empty:
+            continue
+        teams = set(ss["T1_TeamID"]) | set(ss["T2_TeamID"])
+        elo: dict = {t: base_elo for t in teams}
+        for _, row in ss.iterrows():
+            w, l = row["T1_TeamID"], row["T2_TeamID"]
+            ew = expected(elo[w], elo[l])
+            elo[w] += k_factor * (1.0 - ew)
+            elo[l] -= k_factor * (1.0 - ew)
+        for team, rating in elo.items():
+            elo_rows.append({"Season": s, "TeamID": team, "elo": rating})
+
+    elos = pd.DataFrame(elo_rows)
+    elos_T1 = elos.rename(columns={"TeamID": "T1_TeamID", "elo": "T1_elo"})
+    elos_T2 = elos.rename(columns={"TeamID": "T2_TeamID", "elo": "T2_elo"})
+    return elos_T1, elos_T2
+
+
+def _m7_glm_quality(regular_doubled: pd.DataFrame, seeds_df: pd.DataFrame) -> tuple:
+    """Bradley-Terry quality via Ridge on tournament-adjacent teams (notebook cell 23).
+    Returns (quality_T1, quality_T2) DataFrames."""
+    from sklearn.linear_model import Ridge
+
+    # Build set of ST = season/teamid strings for tournament teams
+    seeds_df = seeds_df.copy()
+    seeds_df["ST"] = seeds_df["Season"].astype(str) + "/" + seeds_df["TeamID"].astype(str)
+    st = set(seeds_df["ST"])
+
+    # Add teams that beat a tourney team at least once in regular season
+    rd = regular_doubled.copy()
+    rd["ST1"] = rd["Season"].astype(str) + "/" + rd["T1_TeamID"].astype(str)
+    rd["ST2"] = rd["Season"].astype(str) + "/" + rd["T2_TeamID"].astype(str)
+    beaters = set(rd.loc[(rd["PointDiff"] > 0) & (rd["ST2"].isin(st)), "ST1"])
+    st = st | beaters
+
+    # Filter dataset to rows involving relevant teams
+    dt = rd.loc[rd["ST1"].isin(st) | rd["ST2"].isin(st)].copy()
+
+    quality_rows = []
+    for (s, mw), grp in dt.groupby(["Season", "men_women"]):
+        teams = sorted(set(grp["T1_TeamID"].tolist() + grp["T2_TeamID"].tolist()))
+        if len(teams) < 2 or len(grp) < len(teams):
+            continue
+        team_idx = {t: i for i, t in enumerate(teams)}
+        n_games, n_teams = len(grp), len(teams)
+        X = np.zeros((n_games, n_teams), dtype=np.float32)
+        y = grp["PointDiff"].values.astype(np.float32)
+        for i, (_, row) in enumerate(grp.iterrows()):
+            t1, t2 = row["T1_TeamID"], row["T2_TeamID"]
+            if t1 in team_idx:
+                X[i, team_idx[t1]] = 1.0
+            if t2 in team_idx:
+                X[i, team_idx[t2]] = -1.0
+        try:
+            model = Ridge(alpha=0.01, fit_intercept=False)
+            model.fit(X, y)
+            for t, idx in team_idx.items():
+                quality_rows.append({"Season": s, "TeamID": t, "quality": float(model.coef_[idx])})
+        except Exception:
+            pass
+
+    if not quality_rows:
+        empty = pd.DataFrame(columns=["Season", "T1_TeamID", "T1_quality"])
+        return empty, empty.rename(columns={"T1_TeamID": "T2_TeamID", "T1_quality": "T2_quality"})
+
+    quality = pd.DataFrame(quality_rows)
+    q_T1 = quality.rename(columns={"TeamID": "T1_TeamID", "quality": "T1_quality"})
+    q_T2 = quality.rename(columns={"TeamID": "T2_TeamID", "quality": "T2_quality"})
+    return q_T1, q_T2
+
+
+def _m7_build_tourney_data(
+    tourney_doubled: pd.DataFrame,
+    seeds_df: pd.DataFrame,
+    ss_T1: pd.DataFrame,
+    ss_T2: pd.DataFrame,
+    elos_T1: pd.DataFrame,
+    elos_T2: pd.DataFrame,
+    quality_T1: pd.DataFrame,
+    quality_T2: pd.DataFrame,
+) -> pd.DataFrame:
+    """Merge all features onto tournament data (notebook cells 14-23)."""
+    seeds_df = seeds_df.copy()
+    seeds_df["seed"] = seeds_df["Seed"].apply(lambda x: int(str(x)[1:3]))
+    s_T1 = seeds_df[["Season", "TeamID", "seed"]].rename(
+        columns={"TeamID": "T1_TeamID", "seed": "T1_seed"})
+    s_T2 = seeds_df[["Season", "TeamID", "seed"]].rename(
+        columns={"TeamID": "T2_TeamID", "seed": "T2_seed"})
+
+    td = tourney_doubled[
+        ["Season", "T1_TeamID", "T2_TeamID", "PointDiff", "win", "men_women"]
+    ].copy()
+    # Skip First Four (DayNum < 136)
+    if "DayNum" in tourney_doubled.columns:
+        td = td[tourney_doubled["DayNum"] >= 136].copy()
+
+    td = td.merge(s_T1, on=["Season", "T1_TeamID"], how="left")
+    td = td.merge(s_T2, on=["Season", "T2_TeamID"], how="left")
+    td["Seed_diff"] = td["T2_seed"] - td["T1_seed"]
+
+    td = td.merge(ss_T1, on=["Season", "T1_TeamID"], how="left")
+    td = td.merge(ss_T2, on=["Season", "T2_TeamID"], how="left")
+    td = td.merge(elos_T1, on=["Season", "T1_TeamID"], how="left")
+    td = td.merge(elos_T2, on=["Season", "T2_TeamID"], how="left")
+    td["elo_diff"] = td["T1_elo"] - td["T2_elo"]
+    td = td.merge(quality_T1, on=["Season", "T1_TeamID"], how="left")
+    td = td.merge(quality_T2, on=["Season", "T2_TeamID"], how="left")
+
+    # Fill missing feature columns with 0
+    for col in _M7_FEATURES:
+        if col not in td.columns:
+            td[col] = 0.0
+    td[_M7_FEATURES] = td[_M7_FEATURES].fillna(0.0)
+    return td
+
+
+def _m7_build_test_rows(
+    season: int,
+    gender: str,
+    seeds_df: pd.DataFrame,
+    ss_T1: pd.DataFrame,
+    ss_T2: pd.DataFrame,
+    elos_T1: pd.DataFrame,
+    elos_T2: pd.DataFrame,
+    quality_T1: pd.DataFrame,
+    quality_T2: pd.DataFrame,
+) -> pd.DataFrame:
+    """Build test feature rows for all (T1, T2) pairs with T1 < T2 for seeded teams."""
+    seeds_season = seeds_df[seeds_df["Season"] == season].copy()
+    seeds_season["seed"] = seeds_season["Seed"].apply(lambda x: int(str(x)[1:3]))
+    team_seeds = dict(zip(seeds_season["TeamID"], seeds_season["seed"]))
+    teams = sorted(team_seeds.keys())
+    men_women = 1 if gender == "M" else 0
+
+    rows = []
+    for t1, t2 in combinations(teams, 2):
+        rows.append({
+            "Season": season, "T1_TeamID": t1, "T2_TeamID": t2,
+            "men_women": men_women,
+            "T1_seed": team_seeds.get(t1, 8),
+            "T2_seed": team_seeds.get(t2, 8),
+            "Seed_diff": team_seeds.get(t2, 8) - team_seeds.get(t1, 8),
+        })
+    X = pd.DataFrame(rows)
+
+    X = X.merge(ss_T1, on=["Season", "T1_TeamID"], how="left")
+    X = X.merge(ss_T2, on=["Season", "T2_TeamID"], how="left")
+    X = X.merge(elos_T1, on=["Season", "T1_TeamID"], how="left")
+    X = X.merge(elos_T2, on=["Season", "T2_TeamID"], how="left")
+    X["elo_diff"] = X["T1_elo"] - X["T2_elo"]
+    X = X.merge(quality_T1, on=["Season", "T1_TeamID"], how="left")
+    X = X.merge(quality_T2, on=["Season", "T2_TeamID"], how="left")
+
+    for col in _M7_FEATURES:
+        if col not in X.columns:
+            X[col] = 0.0
+    X[_M7_FEATURES] = X[_M7_FEATURES].fillna(0.0)
+    return X
+
+
+def _compute_modeh7_box_features(detailed_df: pd.DataFrame, compact_df: pd.DataFrame) -> pd.DataFrame:
+    """Per-team per-season averages of scoring and efficiency box stats.
+
+    Returns DataFrame with columns: [Season, TeamID, Score, FGA, OR, DR, Blk, PF,
+    OppScore, OppFGA, OppOR, OppDR, OppBlk, OppPF].
+    Falls back to compact results (score only) when detailed unavailable.
+    """
+    rows = []
+
+    def _agg_side(df, team_col, opp_col, prefix, opp_prefix, stat_cols, opp_stat_cols):
+        """Aggregate stats for one side (W or L) of a detailed results DataFrame."""
+        records = []
+        for season, grp in df.groupby("Season"):
+            for team_id, tgrp in grp.groupby(team_col):
+                r = {"Season": season, "TeamID": int(team_id)}
+                for col, out in zip(stat_cols, ["Score", "FGA", "OR", "DR", "Blk", "PF"]):
+                    r[out] = tgrp[col].mean() if col in tgrp.columns else 0.0
+                for col, out in zip(opp_stat_cols, ["OppScore", "OppFGA", "OppOR", "OppDR", "OppBlk", "OppPF"]):
+                    r[out] = tgrp[col].mean() if col in tgrp.columns else 0.0
+                records.append(r)
+        return records
+
+    stat_cols = []
+    if detailed_df is not None and not detailed_df.empty:
+        w_stat_cols = ["WScore", "WFGA", "WOR", "WDR", "WBlk", "WPF"]
+        w_opp_cols  = ["LScore", "LFGA", "LOR", "LDR", "LBlk", "LPF"]
+        l_stat_cols = ["LScore", "LFGA", "LOR", "LDR", "LBlk", "LPF"]
+        l_opp_cols  = ["WScore", "WFGA", "WOR", "WDR", "WBlk", "WPF"]
+
+        # Only keep columns that actually exist
+        w_stat_cols = [c for c in w_stat_cols if c in detailed_df.columns]
+        w_opp_cols  = [c for c in w_opp_cols  if c in detailed_df.columns]
+        l_stat_cols = [c for c in l_stat_cols if c in detailed_df.columns]
+        l_opp_cols  = [c for c in l_opp_cols  if c in detailed_df.columns]
+
+        out_cols = ["Score", "FGA", "OR", "DR", "Blk", "PF"][: len(w_stat_cols)]
+        opp_cols_out = ["OppScore", "OppFGA", "OppOR", "OppDR", "OppBlk", "OppPF"][: len(w_opp_cols)]
+
+        for season, grp in detailed_df.groupby("Season"):
+            for side, id_col, s_cols, o_cols in [
+                ("W", "WTeamID", w_stat_cols, w_opp_cols),
+                ("L", "LTeamID", l_stat_cols, l_opp_cols),
+            ]:
+                for team_id, tgrp in grp.groupby(id_col):
+                    r = {"Season": int(season), "TeamID": int(team_id)}
+                    for col, out in zip(s_cols, out_cols):
+                        r[out] = float(tgrp[col].mean())
+                    for col, out in zip(o_cols, opp_cols_out):
+                        r[out] = float(tgrp[col].mean())
+                    rows.append(r)
+
+        if rows:
+            box = (
+                pd.DataFrame(rows)
+                .groupby(["Season", "TeamID"])
+                .mean()
+                .reset_index()
+            )
+            # Ensure all expected columns exist with 0 fallback
+            for col in ["Score", "FGA", "OR", "DR", "Blk", "PF", "OppScore", "OppFGA", "OppOR", "OppDR", "OppBlk", "OppPF"]:
+                if col not in box.columns:
+                    box[col] = 0.0
+            return box
+
+    # Fallback: compact results (score only)
+    if compact_df is None or compact_df.empty:
+        return pd.DataFrame(columns=["Season", "TeamID", "Score", "FGA", "OR", "DR", "Blk", "PF",
+                                      "OppScore", "OppFGA", "OppOR", "OppDR", "OppBlk", "OppPF"])
+
+    for side, id_col, score_col, opp_score_col in [
+        ("W", "WTeamID", "WScore", "LScore"),
+        ("L", "LTeamID", "LScore", "WScore"),
+    ]:
+        for (season, team_id), grp in compact_df.groupby(["Season", id_col]):
+            rows.append({
+                "Season": int(season), "TeamID": int(team_id),
+                "Score": float(grp[score_col].mean()) if score_col in grp.columns else 0.0,
+                "FGA": 0.0, "OR": 0.0, "DR": 0.0, "Blk": 0.0, "PF": 0.0,
+                "OppScore": float(grp[opp_score_col].mean()) if opp_score_col in grp.columns else 0.0,
+                "OppFGA": 0.0, "OppOR": 0.0, "OppDR": 0.0, "OppBlk": 0.0, "OppPF": 0.0,
+            })
+
+    if not rows:
+        return pd.DataFrame(columns=["Season", "TeamID", "Score", "FGA", "OR", "DR", "Blk", "PF",
+                                      "OppScore", "OppFGA", "OppOR", "OppDR", "OppBlk", "OppPF"])
+
+    return (
+        pd.DataFrame(rows)
+        .groupby(["Season", "TeamID"])
+        .mean()
+        .reset_index()
+    )
+
+
+def _compute_modeh7_elo(compact_df: pd.DataFrame) -> dict:
+    """Sequential ELO ratings (K=20, start=1500). Returns {(season, team_id): final_elo}."""
+    elo: dict = {}
+    K = 20
+
+    def _expected(ra, rb):
+        return 1.0 / (1.0 + 10 ** ((rb - ra) / 400.0))
+
+    for season, grp in compact_df.sort_values("DayNum").groupby("Season"):
+        # Initialize ratings for this season
+        season_elo: dict = {}
+        for _, row in grp.iterrows():
+            w = int(row["WTeamID"])
+            l = int(row["LTeamID"])
+            rw = season_elo.get(w, 1500.0)
+            rl = season_elo.get(l, 1500.0)
+            ew = _expected(rw, rl)
+            season_elo[w] = rw + K * (1.0 - ew)
+            season_elo[l] = rl + K * (0.0 - (1.0 - ew))
+
+        for team_id, rating in season_elo.items():
+            elo[(season, team_id)] = rating
+
+    return elo
+
+
+def _compute_modeh7_glm_quality(compact_df: pd.DataFrame) -> dict:
+    """Team quality via Ridge regression on team indicators (log-odds point diff).
+
+    For each season: build indicator matrix, label = point differential, fit Ridge.
+    Returns {(season, team_id): float}.
+    """
+    from sklearn.linear_model import Ridge
+
+    quality: dict = {}
+
+    for season, grp in compact_df.groupby("Season"):
+        teams = sorted(set(grp["WTeamID"].tolist() + grp["LTeamID"].tolist()))
+        team_idx = {t: i for i, t in enumerate(teams)}
+        n_games = len(grp)
+        n_teams = len(teams)
+
+        if n_games < 5 or n_teams < 2:
+            continue
+
+        X = np.zeros((n_games, n_teams), dtype=np.float32)
+        y = np.zeros(n_games, dtype=np.float32)
+
+        for i, (_, row) in enumerate(grp.iterrows()):
+            w = int(row["WTeamID"])
+            l = int(row["LTeamID"])
+            margin = float(row["WScore"]) - float(row["LScore"]) if "WScore" in row and "LScore" in row else 1.0
+            X[i, team_idx[w]] = 1.0
+            X[i, team_idx[l]] = -1.0
+            y[i] = margin
+
+        try:
+            model = Ridge(alpha=0.01, fit_intercept=False)
+            model.fit(X, y)
+            for t, idx in team_idx.items():
+                quality[(season, t)] = float(model.coef_[idx])
+        except Exception:
+            pass
+
+    return quality
+
+
+def _build_modeh7_matchup_rows(
+    tourney_df: pd.DataFrame,
+    seeds_df: pd.DataFrame,
+    box_features: pd.DataFrame,
+    elo: dict,
+    glm: dict,
+    seasons: list,
+) -> pd.DataFrame:
+    """Build symmetric training dataset (each game appears twice, T1↔T2 swapped).
+
+    Features = T1 stats − T2 stats for: Score, FGA, OR, DR, Blk, PF, OppScore, …,
+    Elo, GLM_quality, seed_diff.
+    Label = PointDiff (T1_score − T2_score).
+    """
+    box_idx = {}
+    for _, row in box_features.iterrows():
+        box_idx[(int(row["Season"]), int(row["TeamID"]))] = row
+
+    seed_idx = {}
+    for _, row in seeds_df.iterrows():
+        s = str(row["Seed"])
+        num = int(s[1:3]) if len(s) >= 3 else 8
+        seed_idx[(int(row["Season"]), int(row["TeamID"]))] = num
+
+    stat_cols = ["Score", "FGA", "OR", "DR", "Blk", "PF", "OppScore", "OppFGA", "OppOR", "OppDR", "OppBlk", "OppPF"]
+    rows = []
+
+    # Skip First Four games (DayNum < 136 typically, or use WScore==0 trick)
+    # First Four games have DayNum <= 135; main tournament starts DayNum 136
+    main_games = tourney_df[tourney_df["Season"].isin(seasons)].copy()
+    if "DayNum" in main_games.columns:
+        main_games = main_games[main_games["DayNum"] >= 136]
+
+    for _, game in main_games.iterrows():
+        season = int(game["Season"])
+        w = int(game["WTeamID"])
+        l = int(game["LTeamID"])
+        margin = float(game["WScore"]) - float(game["LScore"]) if "WScore" in game and "LScore" in game else 1.0
+
+        for t1, t2, point_diff, win_label in [(w, l, margin, 1), (l, w, -margin, 0)]:
+            feat: dict = {"Season": season, "T1": t1, "T2": t2,
+                          "PointDiff": point_diff, "WinLabel": win_label}
+
+            b1 = box_idx.get((season, t1))
+            b2 = box_idx.get((season, t2))
+            for col in stat_cols:
+                v1 = float(b1[col]) if b1 is not None and col in b1 else 0.0
+                v2 = float(b2[col]) if b2 is not None and col in b2 else 0.0
+                feat[f"diff_{col}"] = v1 - v2
+
+            feat["diff_Elo"] = elo.get((season, t1), 1500.0) - elo.get((season, t2), 1500.0)
+            feat["diff_GLM"] = glm.get((season, t1), 0.0) - glm.get((season, t2), 0.0)
+            feat["diff_Seed"] = seed_idx.get((season, t1), 8) - seed_idx.get((season, t2), 8)
+
+            rows.append(feat)
+
+    return pd.DataFrame(rows)
+
+
+def _generate_modeh7_submission(data_dir: str, season: int, gender: str) -> pd.DataFrame:
+    """2025 Kaggle 1st-place solution (modeh7) — faithful notebook port.
+
+    Trains on combined M+W data with men_women feature. Uses LOSO XGBoost
+    regression on point differential, calibrated with a k=5 spline.
+    """
+    if xgb is None:
+        print("[warn] modeh7: xgboost not available, falling back to seed_spline_only")
+        return _generate_seed_spline_only_submission(data_dir, season, gender)
+
+    print(f"Preparing modeh7 submission for {gender} {season}...")
+
+    # 1. Load raw data for both genders
+    m_reg, m_tour, m_seeds, w_reg, w_tour, w_seeds = _m7_load_raw(data_dir, season)
+
+    if m_reg.empty and w_reg.empty:
+        print("  [warn] No data loaded; falling back to seed_spline_only")
+        return _generate_seed_spline_only_submission(data_dir, season, gender)
+
+    # 2. Symmetric doubling with OT adjustment
+    print("  Preparing doubled datasets...")
+    regular_doubled = pd.concat([_m7_prepare(m_reg), _m7_prepare(w_reg)], ignore_index=True)
+    tourney_doubled  = pd.concat([_m7_prepare(m_tour), _m7_prepare(w_tour)], ignore_index=True)
+    seeds_all = pd.concat([m_seeds, w_seeds], ignore_index=True)
+
+    if regular_doubled.empty or tourney_doubled.empty:
+        print("  [warn] Doubled data empty; falling back to seed_spline_only")
+        return _generate_seed_spline_only_submission(data_dir, season, gender)
+
+    # Filter to seasons with data (cut season: 2003 for M, 2010 for W — use 2010)
+    regular_doubled = regular_doubled[regular_doubled["Season"] >= 2003]
+    tourney_doubled  = tourney_doubled[tourney_doubled["Season"] >= 2003]
+    seeds_all        = seeds_all[seeds_all["Season"] >= 2003]
+
+    # 3. Season-average box features
+    print("  Computing season averages...")
+    ss_T1, ss_T2 = _m7_season_averages(regular_doubled)
+
+    # 4. ELO ratings
+    print("  Computing ELO ratings...")
+    elos_T1, elos_T2 = _m7_elo(regular_doubled, seeds_all)
+
+    # 5. GLM quality
+    print("  Computing GLM quality...")
+    quality_T1, quality_T2 = _m7_glm_quality(regular_doubled, seeds_all)
+
+    # 6. Build tourney_data with all features
+    print("  Building tournament feature dataset...")
+    tourney_data = _m7_build_tourney_data(
+        tourney_doubled, seeds_all, ss_T1, ss_T2,
+        elos_T1, elos_T2, quality_T1, quality_T2,
+    )
+
+    # Only train on seasons with sufficient data, excluding 2020 (COVID) and target season
+    train_seasons = sorted([
+        s for s in tourney_data["Season"].unique()
+        if s != 2020 and s < season
+    ])
+    if len(train_seasons) < 3:
+        print("  [warn] Not enough training seasons; falling back to seed_spline_only")
+        return _generate_seed_spline_only_submission(data_dir, season, gender)
+
+    td_train = tourney_data[tourney_data["Season"].isin(train_seasons)].copy()
+    print(f"  Training on {len(train_seasons)} seasons ({train_seasons[0]}–{train_seasons[-1]}), "
+          f"{len(td_train)} rows (M+W combined)")
+
+    # 7. LOSO loop — matches notebook cell 30 exactly
+    oof_preds = []
+    oof_targets = []
+    loso_models = []
+
+    feat_cols_avail = [c for c in _M7_FEATURES if c in td_train.columns]
+
+    for oof_season in train_seasons:
+        x_train = td_train.loc[td_train["Season"] != oof_season, feat_cols_avail].values
+        y_train = td_train.loc[td_train["Season"] != oof_season, "PointDiff"].values
+        x_val   = td_train.loc[td_train["Season"] == oof_season, feat_cols_avail].values
+        y_val   = td_train.loc[td_train["Season"] == oof_season, "PointDiff"].values
+
+        if len(x_train) < 10 or len(x_val) == 0:
+            continue
+
+        dtrain = xgb.DMatrix(x_train, label=y_train)
+        model = xgb.train(_M7_PARAMS, dtrain, num_boost_round=_M7_NUM_ROUNDS)
+        preds = model.predict(xgb.DMatrix(x_val))
+
+        oof_preds.extend(preds.tolist())
+        oof_targets.extend(y_val.tolist())
+        loso_models.append(model)
+
+    if not oof_preds:
+        print("  [warn] No OOF predictions; falling back to seed_spline_only")
+        return _generate_seed_spline_only_submission(data_dir, season, gender)
+
+    print(f"  Collected {len(oof_preds)} OOF predictions from {len(loso_models)} models")
+
+    # 8. Spline calibration — matches notebook cell 32 exactly
+    t = _M7_SPLINE_CLIP
+    dat = sorted(zip(oof_preds, [v > 0 for v in oof_targets]), key=lambda x: x[0])
+    pred_sorted, label_sorted = zip(*dat)
+    pred_clipped = np.clip(pred_sorted, -t, t)
+    spline_model = UnivariateSpline(pred_clipped, label_sorted, k=5)
+
+    # 9. Build test rows for the target gender/season
+    seeds_gender = m_seeds if gender == "M" else w_seeds
+    if seeds_gender.empty:
+        print(f"  [warn] No seeds for {gender} {season}; falling back to seed_spline_only")
+        return _generate_seed_spline_only_submission(data_dir, season, gender)
+
+    print("  Building test matchup features...")
+    X_test = _m7_build_test_rows(
+        season, gender, seeds_gender, ss_T1, ss_T2,
+        elos_T1, elos_T2, quality_T1, quality_T2,
+    )
+    feat_cols_test = [c for c in feat_cols_avail if c in X_test.columns]
+    dtest = xgb.DMatrix(X_test[feat_cols_test].values)
+
+    # 10. Average predictions across LOSO models + apply spline
+    print(f"  Running {len(loso_models)} LOSO models on {len(X_test)} test matchups...")
+    all_margin_preds = np.array([m.predict(dtest) for m in loso_models])
+    avg_margins = all_margin_preds.mean(axis=0)
+    probs = np.clip(spline_model(np.clip(avg_margins, -t, t)), 0.025, 0.975)
+
+    predictions = [
+        {"ID": f"{season}_{int(row.T1_TeamID)}_{int(row.T2_TeamID)}", "Pred": float(p)}
+        for row, p in zip(X_test.itertuples(index=False), probs)
+    ]
     return _build_submission_from_predictions(season, predictions)

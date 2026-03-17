@@ -72,16 +72,16 @@ march_madness/
 │   ├── eval_results.csv        # Method × year × gender Brier scores (eval_framework.py)
 │   ├── scoring_results.csv     # Legacy aggregate scoring table
 │   └── {year}/
-│       ├── submissions/        # {method}_{gender}.csv
-│       ├── brackets/           # {method}/{gender}/bracket.{png,html}
-│       └── features/           # {gender}/feature_dataset.csv
+│       ├── {method}/           # per-method subtree
+│       │   ├── submissions/    # {method}_{gender}.csv
+│       │   └── brackets/       # {gender}/bracket.{png,html}
+│       ├── features/           # shared cache: {gender}/feature_dataset.csv
+│       └── submission_{year}_{strategy}.csv  # final Kaggle submission
 ├── utils/
-│   ├── split_submission_file.py
 │   ├── download_logos.py       # ESPN logo downloader: data/logos/{M|W}/{team_id}.png
 │   ├── generate_historical_artifacts.py  # Batch artifact generation (all years × genders × methods)
 │   ├── eval_framework.py       # Evaluate all methods with Brier leaderboard → output/eval_results.csv
-│   ├── generate_2026_submission.py  # Pick top methods from eval_results and generate 2026 submission
-│   └── compare_historical_models.py  # Compare performance across archived submissions
+│   └── generate_submission.py  # Pick top methods from eval_results and generate submission
 └── .claude/
     └── commands/               # Slash commands
         ├── score.md            # /score — run historical scoring
@@ -111,7 +111,7 @@ march_madness/
 4. **Scoring**: `notebooks/score_historical.ipynb` — evaluate all historical submissions in `output/`
 5. **Bracket viz**: `notebooks/generate_bracket.ipynb` — bracket PNG/HTML for any season
 
-Outputs go to `output/`. Historical artifacts live under `output/{year}/submissions/` and `output/{year}/brackets/`. Runtime feature caches live under `output/{year}/features/`.
+Outputs go to `output/`. Historical artifacts live under `output/{year}/{method}/submissions/` and `output/{year}/{method}/brackets/`. Runtime feature caches live under `output/{year}/features/`.
 
 **Backtesting:** Set `CURRENT_SEASON` to a past year and `DATA_DIR = "../data/2026"` (cumulative). The 2026 dataset has all results through 2025 and is the correct source for historical analysis.
 
@@ -163,8 +163,8 @@ poetry run python utils/generate_historical_artifacts.py \
 ```
 
 Outputs:
-- `output/{year}/submissions/{method}_{gender}.csv` — prediction CSVs (skipped if exists)
-- `output/{year}/brackets/{method}/{gender}/bracket.png`
+- `output/{year}/{method}/submissions/{method}_{gender}.csv` — prediction CSVs (skipped if exists)
+- `output/{year}/{method}/brackets/{gender}/bracket.png`
 - `output/{year}/features/{gender}/feature_dataset.csv` — cached feature rows for that season
 - `output/scoring_results.csv` — aggregate Brier score table
 
@@ -187,18 +187,18 @@ poetry run python utils/eval_framework.py --include-slow
 
 Output: `output/eval_results.csv`
 
-## Generating 2026 Submission
+## Generating a Submission
 
 ```bash
 # Use top methods from eval_results.csv (default: top1 strategy):
-poetry run python utils/generate_2026_submission.py
+poetry run python utils/generate_submission.py --season 2026
 
 # Average top 3 methods, rank on recent years only:
-poetry run python utils/generate_2026_submission.py \
-    --strategy average_top3 --years-for-ranking 2024 2025 --top-n 3
+poetry run python utils/generate_submission.py \
+    --season 2026 --strategy average_top3 --years-for-ranking 2024 2025 --top-n 3
 ```
 
-Output: `output/2026/submission_2026_{strategy}.csv`
+Output: `output/{season}/submission_{season}_{strategy}.csv`
 
 ## Prediction Methods
 

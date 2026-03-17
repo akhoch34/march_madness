@@ -62,3 +62,10 @@ year,method,gender,brier_score,accuracy,n_games,missing_games
 2025,recency_xgb,W,0.12222,0.85075,67,0
 2025,poisson_margin,W,0.14932,0.85075,67,0
 2025,seed_matchup_calibration,W,0.12035,0.8209,67,0
+2022,modeh7,M,0.23641,0.61194,67,0
+2023,modeh7,M,0.20323,0.70149,67,0
+2024,modeh7,M,0.18781,0.71642,67,0
+2025,modeh7,M,0.13969,0.77612,67,0
+2023,modeh7,W,0.16536,0.79104,67,0
+2024,modeh7,W,0.12522,0.80597,67,0
+2025,modeh7,W,0.10748,0.85075,67,0

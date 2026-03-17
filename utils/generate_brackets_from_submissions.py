@@ -20,12 +20,7 @@ import argparse
 import os
 import sys
 import traceback
-import warnings
 
-warnings.filterwarnings("ignore")
-
-import matplotlib
-matplotlib.use("Agg")
 import pandas as pd
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -34,7 +29,10 @@ sys.path.insert(0, PROJECT_ROOT)
 
 from src.data_classes.processing.DataManager import MarchMadnessDataManager
 from src.data_classes.simple_predictor import SimplePredictor
-from src.data_classes.bracket.BracketGenerator import BracketSimulator
+from src.visualization.pil_bracket import render_pil_bracket
+
+_LOGO_DIR_M = os.path.join(PROJECT_ROOT, "data", "logos", "M")
+_LOGO_DIR_W = os.path.join(PROJECT_ROOT, "data", "logos", "W")
 
 
 DEFAULT_YEARS = [2022, 2023, 2024, 2025]
@@ -60,24 +58,28 @@ def _parse_submission_filename(filename: str):
 
 def _discover_submissions(output_root: str, years: list, genders: list, methods: list):
     """
-    Scan output/{year}/submissions/ and return list of (year, method, gender, path).
+    Scan output/{year}/{method}/submissions/ and return list of (year, method, gender, path).
     Filtered by genders and methods if specified.
     """
     found = []
     for year in years:
-        sub_dir = os.path.join(output_root, str(year), "submissions")
-        if not os.path.isdir(sub_dir):
+        year_dir = os.path.join(output_root, str(year))
+        if not os.path.isdir(year_dir):
             continue
-        for fname in sorted(os.listdir(sub_dir)):
-            method, gender = _parse_submission_filename(fname)
-            if method is None:
+        for candidate in sorted(os.listdir(year_dir)):
+            sub_dir = os.path.join(year_dir, candidate, "submissions")
+            if not os.path.isdir(sub_dir):
                 continue
-            if genders and gender not in genders:
-                continue
-            if methods and method not in methods:
-                continue
-            fpath = os.path.join(sub_dir, fname)
-            found.append((year, method, gender, fpath))
+            for fname in sorted(os.listdir(sub_dir)):
+                method, gender = _parse_submission_filename(fname)
+                if method is None:
+                    continue
+                if genders and gender not in genders:
+                    continue
+                if methods and method not in methods:
+                    continue
+                fpath = os.path.join(sub_dir, fname)
+                found.append((year, method, gender, fpath))
     return found
 
 
@@ -96,7 +98,7 @@ def _build_predictor(data_dir: str, gender: str, season: int, submission_df: pd.
 
 
 def _bracket_dir(output_root: str, year: int, method: str, gender: str) -> str:
-    path = os.path.join(output_root, str(year), "brackets", method, gender)
+    path = os.path.join(output_root, str(year), method, "brackets", gender)
     os.makedirs(path, exist_ok=True)
     return path
 
@@ -139,20 +141,15 @@ def generate_bracket(
         print(f"    [error] building predictor for {year}/{method}/{gender}: {e}")
         return False
 
-    sim = BracketSimulator(predictor=predictor)
-    try:
-        sim.use_predictor_data(season=year)
-        sim.build_bracket_tree(season=year)
-    except Exception as e:
-        print(f"    [error] building bracket tree for {year}/{method}/{gender}: {e}")
-        traceback.print_exc()
-        return False
-
     success = True
+
+    logo_dir = _LOGO_DIR_M if gender == "M" else _LOGO_DIR_W
+    if not os.path.isdir(logo_dir):
+        logo_dir = None
 
     if need_predicted:
         try:
-            sim.visualize_bracket(method="ensemble", output_path=predicted_path, show_plot=False)
+            render_pil_bracket(predictor, year, predicted_path, gender=gender, logo_dir=logo_dir)
             print(f"    [ok]   {predicted_path}")
         except Exception as e:
             print(f"    [warn] predicted bracket failed for {year}/{method}/{gender}: {e}")
@@ -161,10 +158,14 @@ def generate_bracket(
 
     if need_historical:
         try:
-            sim.visualize_historical_bracket(season=year, method="ensemble", output_path=historical_path, show_plot=False)
+            render_pil_bracket(
+                predictor, year, historical_path, gender=gender,
+                logo_dir=logo_dir, historical=True,
+            )
             print(f"    [ok]   {historical_path}")
         except Exception as e:
             print(f"    [warn] historical bracket failed for {year}/{method}/{gender}: {e}")
+            traceback.print_exc()
             success = False
 
     return success
