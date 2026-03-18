@@ -204,14 +204,30 @@ def score_all_submissions(
     for season in seasons:
         print(f"Scoring submissions for season {season}...")
         year_dir = archive_path / str(season)
-        submissions_dir = year_dir / "submissions"
-        target_dir = submissions_dir if submissions_dir.exists() else year_dir
-        if not target_dir.exists():
-            print(f"  No submissions directory found for {season} under {archive_dir}")
+        if not year_dir.exists():
+            print(f"  No directory found for {season} under {archive_dir}")
             continue
 
-        csv_files = sorted(target_dir.glob("*.csv"))
-        print(f"  Found {len(csv_files)} submission files in {target_dir}")
+        # Collect CSVs from:
+        #   1. year_dir/{method}/{file}.csv  — current per-method flat structure
+        #   2. year_dir/submissions/{file}.csv  — legacy archive structure
+        #   3. year_dir/{file}.csv  — top-level combined submissions
+        _SKIP_DIRS = {"features"}
+        csv_files = []
+        for child in sorted(year_dir.iterdir()):
+            if child.name in _SKIP_DIRS:
+                continue
+            if child.is_dir():
+                legacy_sub = child / "submissions"
+                scan_dir = legacy_sub if legacy_sub.exists() else child
+                csv_files.extend(sorted(scan_dir.glob("*.csv")))
+            elif child.suffix == ".csv":
+                csv_files.append(child)
+
+        if not csv_files:
+            print(f"  No submission files found for {season} under {archive_dir}")
+            continue
+        print(f"  Found {len(csv_files)} submission files")
         for file_index, csv_file in enumerate(csv_files, start=1):
             model_name = csv_file.stem
             print(f"  [{file_index}/{len(csv_files)}] Loading {csv_file.name}...")

@@ -1,8 +1,8 @@
 """
 Generate bracket PNGs from existing submission CSVs — no model retraining required.
 
-Scans output/{year}/submissions/ for {method}_{gender}.csv files and generates
-bracket images using the PIL-based BracketSimulator.
+Scans output/{year}/{method}/{method}_{gender}.csv files and generates bracket images
+using the PIL-based BracketSimulator.
 
 Usage (from project root):
     poetry run python utils/generate_brackets_from_submissions.py
@@ -12,8 +12,8 @@ Usage (from project root):
         --years 2022 2023 2024 2025 --no-skip-existing
 
 Outputs:
-    output/{year}/brackets/{method}/{gender}/bracket.png
-    output/{year}/brackets/{method}/{gender}/bracket_historical.png  (for 2022-2025)
+    output/{year}/{method}/bracket_{gender}.png
+    output/{year}/{method}/bracket_{gender}_historical.png  (for 2022-2025)
 """
 
 import argparse
@@ -58,19 +58,22 @@ def _parse_submission_filename(filename: str):
 
 def _discover_submissions(output_root: str, years: list, genders: list, methods: list):
     """
-    Scan output/{year}/{method}/submissions/ and return list of (year, method, gender, path).
-    Filtered by genders and methods if specified.
+    Scan output/{year}/{method}/{method}_{gender}.csv and return list of
+    (year, method, gender, path). Filtered by genders and methods if specified.
     """
+    _SKIP_DIRS = {"features"}
     found = []
     for year in years:
         year_dir = os.path.join(output_root, str(year))
         if not os.path.isdir(year_dir):
             continue
         for candidate in sorted(os.listdir(year_dir)):
-            sub_dir = os.path.join(year_dir, candidate, "submissions")
-            if not os.path.isdir(sub_dir):
+            if candidate in _SKIP_DIRS:
                 continue
-            for fname in sorted(os.listdir(sub_dir)):
+            method_dir = os.path.join(year_dir, candidate)
+            if not os.path.isdir(method_dir):
+                continue
+            for fname in sorted(os.listdir(method_dir)):
                 method, gender = _parse_submission_filename(fname)
                 if method is None:
                     continue
@@ -78,7 +81,7 @@ def _discover_submissions(output_root: str, years: list, genders: list, methods:
                     continue
                 if methods and method not in methods:
                     continue
-                fpath = os.path.join(sub_dir, fname)
+                fpath = os.path.join(method_dir, fname)
                 found.append((year, method, gender, fpath))
     return found
 
@@ -97,8 +100,8 @@ def _build_predictor(data_dir: str, gender: str, season: int, submission_df: pd.
     )
 
 
-def _bracket_dir(output_root: str, year: int, method: str, gender: str) -> str:
-    path = os.path.join(output_root, str(year), method, "brackets", gender)
+def _method_dir(output_root: str, year: int, method: str) -> str:
+    path = os.path.join(output_root, str(year), method)
     os.makedirs(path, exist_ok=True)
     return path
 
@@ -112,9 +115,9 @@ def generate_bracket(
     output_root: str,
     skip_existing: bool = True,
 ):
-    out_dir = _bracket_dir(output_root, year, method, gender)
-    predicted_path = os.path.join(out_dir, "bracket.png")
-    historical_path = os.path.join(out_dir, "bracket_historical.png")
+    out_dir = _method_dir(output_root, year, method)
+    predicted_path = os.path.join(out_dir, f"bracket_{gender}.png")
+    historical_path = os.path.join(out_dir, f"bracket_{gender}_historical.png")
 
     need_predicted = not skip_existing or not os.path.exists(predicted_path)
     need_historical = (year in HISTORICAL_YEARS) and (not skip_existing or not os.path.exists(historical_path))

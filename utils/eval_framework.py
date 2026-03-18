@@ -53,6 +53,7 @@ _METHOD_REGISTRY = {
     "seed_matchup_calibration": "notebook",
     "modeh7": "notebook",         # LOSO XGBoost regressor (2025 Kaggle 1st-place)
     "meta_ensemble": "notebook",  # slow — OOF loop
+    "upset_aware_ensemble": "notebook",  # xgb_ensemble_v2 + upset features + 50/50 blend (M)
     # predictor-backed methods (require ELO + ML initialization)
     "elo": "predictor",
     "elo_enhanced": "predictor",
@@ -123,7 +124,7 @@ class _PredictorCache:
 # ── Core generation ───────────────────────────────────────────────────────────
 
 def _submission_path(output_dir: str, season: int, method: str, gender: str) -> str:
-    sub_dir = os.path.join(output_dir, str(season), method, "submissions")
+    sub_dir = os.path.join(output_dir, str(season), method)
     os.makedirs(sub_dir, exist_ok=True)
     return os.path.join(sub_dir, f"{method}_{gender}.csv")
 

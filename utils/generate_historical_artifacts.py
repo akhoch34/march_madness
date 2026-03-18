@@ -17,8 +17,9 @@ Usage (from project root):
         --base-data-dir data
 
 Outputs:
-    output/{year}/submissions/{method}_{gender}.csv   - skipped if already exists
-    output/{year}/brackets/{method}/{gender}/bracket.png
+    output/{year}/{method}/{method}_{gender}.csv      - skipped if already exists
+    output/{year}/{method}/bracket_{gender}.png
+    output/{year}/{method}/bracket_{gender}.html
     output/{year}/features/{gender}/feature_dataset.csv
     output/scoring_results.csv                        - aggregate Brier scores
 """
@@ -111,7 +112,7 @@ def _build_predictor(
 
 def _submission_path(year: int, method: str, gender: str, artifact_suffix: str = "") -> str:
     method_dir = f"{method}_{artifact_suffix}" if artifact_suffix else method
-    path = os.path.join(OUTPUT_ROOT, str(year), method_dir, "submissions")
+    path = os.path.join(OUTPUT_ROOT, str(year), method_dir)
     os.makedirs(path, exist_ok=True)
     suffix = f"_{artifact_suffix}" if artifact_suffix else ""
     return os.path.join(path, f"{method}{suffix}_{gender}.csv")
@@ -119,16 +120,16 @@ def _submission_path(year: int, method: str, gender: str, artifact_suffix: str =
 
 def _bracket_path(year: int, method: str, gender: str, artifact_suffix: str = "") -> str:
     method_dir = f"{method}_{artifact_suffix}" if artifact_suffix else method
-    path = os.path.join(OUTPUT_ROOT, str(year), method_dir, "brackets", gender)
+    path = os.path.join(OUTPUT_ROOT, str(year), method_dir)
     os.makedirs(path, exist_ok=True)
-    return os.path.join(path, "bracket.png")
+    return os.path.join(path, f"bracket_{gender}.png")
 
 
 def _bracket_html_path(year: int, method: str, gender: str, artifact_suffix: str = "") -> str:
     method_dir = f"{method}_{artifact_suffix}" if artifact_suffix else method
-    path = os.path.join(OUTPUT_ROOT, str(year), method_dir, "brackets", gender)
+    path = os.path.join(OUTPUT_ROOT, str(year), method_dir)
     os.makedirs(path, exist_ok=True)
-    return os.path.join(path, "bracket.html")
+    return os.path.join(path, f"bracket_{gender}.html")
 
 
 _NOTEBOOK_METHODS = {
