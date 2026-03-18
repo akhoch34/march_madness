@@ -40,6 +40,8 @@ def generate_notebook_submission(method: str, data_dir: str, season: int, gender
         return _generate_seed_matchup_calibration_submission(data_dir, season, gender)
     if method == "modeh7":
         return _generate_modeh7_submission(data_dir, season, gender)
+    if method == "upset_aware_ensemble":
+        return _generate_upset_aware_ensemble_submission(data_dir, season, gender)
     raise ValueError(f"Unsupported notebook-backed method: {method}")
 
 
@@ -1960,4 +1962,264 @@ def _generate_modeh7_submission(data_dir: str, season: int, gender: str) -> pd.D
         {"ID": f"{season}_{int(row.T1_TeamID)}_{int(row.T2_TeamID)}", "Pred": float(p)}
         for row, p in zip(X_test.itertuples(index=False), probs)
     ]
+    return _build_submission_from_predictions(season, predictions)
+
+
+# ── upset_aware_ensemble ──────────────────────────────────────────────────────
+
+def _compute_upset_features(
+    reg_detailed: pd.DataFrame | None,
+    reg_compact: pd.DataFrame,
+    seeds_df: pd.DataFrame,
+    massey_df: pd.DataFrame | None,
+) -> pd.DataFrame:
+    """Compute upset-predictive features per (Season, TeamID).
+
+    Returns DataFrame with columns:
+      - ThreePtReliance: FGA3 / FGA (high = high-variance team)
+      - RecentMomentum: last_10_win_pct - full_season_win_pct
+      - MasseyVsSeedGap: ActualSeed - MasseyImpliedSeed (positive = underseeded)
+      - DefFirstRatio: DefEff / OffEff (higher = more defense-reliant, more consistent)
+
+    Graceful fallback: missing detailed data → ThreePtReliance/DefFirstRatio = 0.
+    Massey unavailable → MasseyVsSeedGap = 0.
+    """
+    records: dict[tuple, dict] = {}
+
+    # ── Detailed stats: ThreePtReliance, DefFirstRatio ────────────────────────
+    if reg_detailed is not None and not reg_detailed.empty:
+        for _, row in reg_detailed.iterrows():
+            season = int(row["Season"])
+            w_poss = float(row["WFGA"]) - float(row["WOR"]) + float(row["WTO"]) + 0.44 * float(row["WFTA"])
+            l_poss = float(row["LFGA"]) - float(row["LOR"]) + float(row["LTO"]) + 0.44 * float(row["LFTA"])
+            poss = (w_poss + l_poss) / 2.0
+
+            for team_id, fga, fga3, pts, opp_pts in [
+                (int(row["WTeamID"]), float(row["WFGA"]), float(row["WFGA3"]),
+                 float(row["WScore"]), float(row["LScore"])),
+                (int(row["LTeamID"]), float(row["LFGA"]), float(row["LFGA3"]),
+                 float(row["LScore"]), float(row["WScore"])),
+            ]:
+                key = (season, team_id)
+                if key not in records:
+                    records[key] = {
+                        "Season": season, "TeamID": team_id,
+                        "FGA": 0.0, "FGA3": 0.0,
+                        "Pts": 0.0, "OppPts": 0.0, "Poss": 0.0, "Games": 0,
+                    }
+                r = records[key]
+                r["FGA"] += fga
+                r["FGA3"] += fga3
+                r["Pts"] += pts
+                r["OppPts"] += opp_pts
+                r["Poss"] += poss
+                r["Games"] += 1
+
+    # ── Compact stats: RecentMomentum ─────────────────────────────────────────
+    momentum_records: dict[tuple, list] = {}
+    for _, row in reg_compact.iterrows():
+        season, day = int(row["Season"]), int(row["DayNum"])
+        for team_id, won in [(int(row["WTeamID"]), True), (int(row["LTeamID"]), False)]:
+            key = (season, team_id)
+            momentum_records.setdefault(key, []).append((day, won))
+
+    # ── Massey vs Seed gap ────────────────────────────────────────────────────
+    massey_gap_map: dict[tuple, float] = {}
+    if massey_df is not None and not massey_df.empty:
+        late = massey_df[massey_df["RankingDayNum"] <= 128].copy()
+        avg_rank = (
+            late.groupby(["Season", "TeamID"])["OrdinalRank"]
+            .mean()
+            .reset_index(name="MasseyRankAvg")
+        )
+        avg_rank["MasseyRankNorm"] = avg_rank.groupby("Season")["MasseyRankAvg"].transform(
+            lambda x: 1 - (x - x.min()) / (x.max() - x.min() + 1e-9)
+        )
+        avg_rank["MasseyImpliedSeed"] = (1 - avg_rank["MasseyRankNorm"]) * 15 + 1
+
+        for _, mrow in avg_rank.iterrows():
+            s = int(mrow["Season"])
+            t = int(mrow["TeamID"])
+            seed_rows = seeds_df[(seeds_df["Season"] == s) & (seeds_df["TeamID"] == t)]
+            if len(seed_rows) > 0:
+                actual_seed = _seed_number(seed_rows.iloc[0]["Seed"])
+                massey_gap_map[(s, t)] = actual_seed - float(mrow["MasseyImpliedSeed"])
+
+    # ── Assemble output ───────────────────────────────────────────────────────
+    all_keys = set(records.keys()) | set(momentum_records.keys())
+    rows = []
+    for key in all_keys:
+        season, team_id = key
+        r = records.get(key, {})
+
+        # ThreePtReliance
+        fga = r.get("FGA", 0.0)
+        fga3 = r.get("FGA3", 0.0)
+        three_pt_reliance = fga3 / fga if fga > 0 else 0.0
+
+        # DefFirstRatio
+        poss = r.get("Poss", 0.0)
+        games = r.get("Games", 0)
+        if poss > 0 and games > 0:
+            off_eff = (r.get("Pts", 0.0) / poss) * 100
+            def_eff = (r.get("OppPts", 0.0) / poss) * 100
+            def_first_ratio = def_eff / off_eff if off_eff > 0 else 1.0
+        else:
+            def_first_ratio = 1.0
+
+        # RecentMomentum
+        games_list = sorted(momentum_records.get(key, []), key=lambda x: x[0])
+        if games_list:
+            total = len(games_list)
+            full_win_pct = sum(1 for _, w in games_list if w) / total
+            last10 = games_list[-10:]
+            last10_win_pct = sum(1 for _, w in last10 if w) / len(last10)
+            momentum = last10_win_pct - full_win_pct
+        else:
+            momentum = 0.0
+
+        # MasseyVsSeedGap
+        massey_gap = massey_gap_map.get(key, 0.0)
+
+        rows.append({
+            "Season": season,
+            "TeamID": team_id,
+            "ThreePtReliance": three_pt_reliance,
+            "DefFirstRatio": def_first_ratio,
+            "RecentMomentum": momentum,
+            "MasseyVsSeedGap": massey_gap,
+        })
+
+    return pd.DataFrame(rows)
+
+
+def _generate_upset_aware_ensemble_submission(data_dir: str, season: int, gender: str) -> pd.DataFrame:
+    """xgb_ensemble_v2 + 4 upset-specific features + reduced spline anchor.
+
+    Key changes vs xgb_ensemble_v2:
+      - Adds ThreePtReliance, DefFirstRatio, RecentMomentum, MasseyVsSeedGap diffs
+      - Men's blend: 50% ML + 50% spline (down from 30/70) — lets upset features matter
+      - Women's blend: 30% ML + 70% spline (unchanged — fewer features available)
+    """
+    print(f"Preparing upset_aware_ensemble submission for {gender} {season}...")
+    dm = _get_data_manager(data_dir, season, gender)
+    reg = dm.data["regular_season"]
+    detailed = dm.data.get("regular_season_detailed")
+    tourney = dm.data["tourney_results"]
+    seeds = dm.data["tourney_seeds"]
+
+    # Build base v2 features
+    compact_feats = _compute_compact_features(reg)
+    detailed_feats = _compute_detailed_features(detailed)
+    massey_feats = _compute_massey_multi(dm.data["rankings"]) if dm.rankings_available else None
+    massey_individual = _compute_massey_individual(dm.data["rankings"]) if dm.rankings_available else None
+    conf_feats = _compute_conf_tourney_features(dm.data.get("conf_tourney"))
+    if conf_feats.empty:
+        conf_feats = None
+
+    # Build upset-specific features
+    massey_raw = dm.data["rankings"] if dm.rankings_available else None
+    upset_feats = _compute_upset_features(detailed, reg, seeds, massey_raw)
+
+    # Merge into combined per-team features
+    def _merge_all(base: pd.DataFrame) -> pd.DataFrame:
+        df = base.copy()
+        for extra in [detailed_feats, massey_feats, massey_individual, conf_feats, upset_feats]:
+            if extra is not None and not extra.empty:
+                df = df.merge(extra, on=["Season", "TeamID"], how="left")
+        return df
+
+    all_feats_raw = _merge_all(compact_feats)
+
+    train_tourney = tourney[(tourney["Season"] >= 2010) & (tourney["Season"] < season)]
+    print(f"Building upset_aware training features from {len(train_tourney)} tournament games...")
+
+    # Build matchup rows (reuse v2 builder with all_feats already merged)
+    feat_cols = [col for col in all_feats_raw.columns if col not in ["Season", "TeamID"]]
+    rows = []
+    for _, game in train_tourney.iterrows():
+        s = int(game["Season"])
+        winner = int(game["WTeamID"])
+        loser = int(game["LTeamID"])
+        team1, team2 = min(winner, loser), max(winner, loser)
+        actual = 1.0 if team1 == winner else 0.0
+
+        feat1 = all_feats_raw[(all_feats_raw["Season"] == s) & (all_feats_raw["TeamID"] == team1)]
+        feat2 = all_feats_raw[(all_feats_raw["Season"] == s) & (all_feats_raw["TeamID"] == team2)]
+        if len(feat1) == 0 or len(feat2) == 0:
+            continue
+
+        seed1_rows = seeds[(seeds["Season"] == s) & (seeds["TeamID"] == team1)]
+        seed2_rows = seeds[(seeds["Season"] == s) & (seeds["TeamID"] == team2)]
+        if len(seed1_rows) == 0 or len(seed2_rows) == 0:
+            continue
+
+        feat1 = feat1.iloc[0]
+        feat2 = feat2.iloc[0]
+        row = {
+            "Season": s,
+            "Team1ID": team1,
+            "Team2ID": team2,
+            "Result": actual,
+            "SeedDiff": _seed_number(seed1_rows.iloc[0]["Seed"]) - _seed_number(seed2_rows.iloc[0]["Seed"]),
+        }
+        for col in feat_cols:
+            v1 = feat1.get(col, 0)
+            v2 = feat2.get(col, 0)
+            row[f"{col}_1"] = v1
+            row[f"{col}_2"] = v2
+            row[f"{col}_Diff"] = v1 - v2
+        rows.append(row)
+
+    feat_df = pd.DataFrame(rows)
+    model_feat_cols = [col for col in feat_df.columns if col not in ["Season", "Team1ID", "Team2ID", "Result"]]
+    X = feat_df[model_feat_cols].fillna(0)
+    y = feat_df["Result"]
+
+    trained_models = []
+    for name, clf in _ensemble_models():
+        print(f"Fitting upset_aware component {name} on shape={X.shape}...")
+        clf.fit(X, y)
+        trained_models.append((name, clf))
+        print(f"  Component {name} fit complete.")
+
+    seed_spline = UnivariateSpline(
+        np.sort(feat_df["SeedDiff"].values),
+        feat_df.sort_values("SeedDiff")["Result"].values,
+        s=len(feat_df),
+        ext=3,
+    )
+    # Reduced spline anchor for men — lets upset features have more influence
+    blend_weight = 0.3 if gender == "W" else 0.5
+
+    predictions = []
+    current_feats = all_feats_raw[all_feats_raw["Season"] == season].set_index("TeamID")
+    seeded_teams = _get_current_seeded_teams(dm, season)
+    total_matchups = len(seeded_teams) * (len(seeded_teams) - 1) // 2
+    print(f"Generating upset_aware_ensemble predictions for {total_matchups} matchups...")
+    for index, (team1, team2) in enumerate(_iter_matchups(seeded_teams), start=1):
+        seed1_rows = seeds[(seeds["Season"] == season) & (seeds["TeamID"] == team1)]
+        seed2_rows = seeds[(seeds["Season"] == season) & (seeds["TeamID"] == team2)]
+        if len(seed1_rows) == 0 or len(seed2_rows) == 0:
+            continue
+        row = {
+            "SeedDiff": _seed_number(seed1_rows.iloc[0]["Seed"]) - _seed_number(seed2_rows.iloc[0]["Seed"])
+        }
+        feat1 = current_feats.loc[team1] if team1 in current_feats.index else pd.Series(dtype=float)
+        feat2 = current_feats.loc[team2] if team2 in current_feats.index else pd.Series(dtype=float)
+        for col in feat_cols:
+            v1 = feat1.get(col, 0)
+            v2 = feat2.get(col, 0)
+            row[f"{col}_1"] = v1
+            row[f"{col}_2"] = v2
+            row[f"{col}_Diff"] = v1 - v2
+
+        row_df = pd.DataFrame([row])[model_feat_cols].fillna(0)
+        preds = [clf.predict_proba(row_df)[0, 1] for _, clf in trained_models]
+        ensemble_pred = float(np.mean(preds))
+        spline_pred = float(np.clip(seed_spline(row["SeedDiff"]), 0.025, 0.975))
+        final_pred = blend_weight * ensemble_pred + (1 - blend_weight) * spline_pred
+        predictions.append({"ID": f"{season}_{team1}_{team2}", "Pred": final_pred})
+        _log_progress("  Upset_aware predictions", index, total_matchups)
+
     return _build_submission_from_predictions(season, predictions)

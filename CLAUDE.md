@@ -72,9 +72,11 @@ march_madness/
 │   ├── eval_results.csv        # Method × year × gender Brier scores (eval_framework.py)
 │   ├── scoring_results.csv     # Legacy aggregate scoring table
 │   └── {year}/
-│       ├── {method}/           # per-method subtree
-│       │   ├── submissions/    # {method}_{gender}.csv
-│       │   └── brackets/       # {gender}/bracket.{png,html}
+│       ├── {method}/           # per-method flat folder
+│       │   ├── {method}_{gender}.csv        # submission predictions
+│       │   ├── bracket_{gender}.png
+│       │   ├── bracket_{gender}_historical.png
+│       │   └── bracket_{gender}.html
 │       ├── features/           # shared cache: {gender}/feature_dataset.csv
 │       └── submission_{year}_{strategy}.csv  # final Kaggle submission
 ├── utils/

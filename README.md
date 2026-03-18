@@ -12,7 +12,7 @@ poetry install && poetry shell
 
 ## Prediction Methods
 
-Eleven methods are implemented in `src/approaches/notebook_models.py`. Two additional ELO-based methods exist via the `Predictor` class but are excluded from defaults due to poor historical Brier scores (~0.30).
+Twelve methods are implemented in `src/approaches/notebook_models.py`. Two additional ELO-based methods exist via the `Predictor` class but are excluded from defaults due to poor historical Brier scores (~0.30).
 
 | Method | How It Works | Key Features | Blend |
 |--------|-------------|--------------|-------|
@@ -27,6 +27,7 @@ Eleven methods are implemented in `src/approaches/notebook_models.py`. Two addit
 | `poisson_margin` | Computes expected scoring margin `(OffEff_t1 − DefEff_t2) − (OffEff_t2 − DefEff_t1)`, fits logistic regression on historical (margin, result) pairs. Only method derived purely from on-court efficiency. | Offensive/defensive efficiency (pts per game), expected point margin | 35% margin LR + 65% spline |
 | `seed_matchup_calibration` | Empirical win-rate lookup keyed by `(seed_lo, seed_hi)` pair (e.g., 5v12 ≈ 35%). Blends calibrated rate with `xgb_ensemble_v2`. Falls back to spline if <10 historical games for that pair. | Historical win rate per seed-pair + `xgb_ensemble_v2` predictions | 35% historical rate + 65% xgb_v2 |
 | `meta_ensemble` | Stacked meta-learner: OOF loop trains `xgb_ensemble_v2` and `massey_direct` on prior seasons, fits LogisticRegression on OOF preds. Slow (~5+ min). Women's fallback: `xgb_ensemble_v2` only. | `xgb_ensemble_v2` and `massey_direct` out-of-fold predictions as meta-features | 50% meta-LR + 50% spline |
+| `upset_aware_ensemble` | Extends `xgb_ensemble_v2` with four upset-specific features derived from upset pattern analysis. Reduces spline dominance for men's to let upset signals matter. | All `xgb_ensemble_v2` features + ThreePtReliance, DefFirstRatio, RecentMomentum, MasseyVsSeedGap diffs | **50% ensemble + 50% spline** (M); 30/70 (W) |
 
 **ELO-backed methods** (via `Predictor` class, included in `generate_historical_artifacts.py` but not `eval_framework.py` defaults):
 - `elo` — pure ELO rating prediction
@@ -48,6 +49,7 @@ Results from `output/eval_results.csv` (Brier score, lower is better). Refresh w
 | `baseline_massey` | 0.2145 | 0.2175 | 0.1833 | 0.1652 | 0.1951 |
 | `massey_direct` | 0.2142 | 0.2114 | 0.1939 | 0.1645 | 0.1960 |
 | `seed_spline_only` | 0.2142 | 0.2112 | 0.1940 | 0.1648 | 0.1961 |
+| `upset_aware_ensemble` | 0.2258 | 0.2228 | 0.1884 | 0.1527 | 0.1974 |
 | `massey_blend` | 0.2142 | 0.2147 | 0.2008 | 0.1811 | 0.2027 |
 | `poisson_margin` | 0.2145 | 0.2148 | 0.2027 | 0.1836 | 0.2039 |
 
@@ -60,8 +62,78 @@ Results from `output/eval_results.csv` (Brier score, lower is better). Refresh w
 | `xgb_ensemble` | 0.1725 | 0.1233 | 0.1185 | 0.1381 |
 | `xgb_ensemble_v2` | 0.1729 | 0.1229 | 0.1217 | 0.1391 |
 | `seed_matchup_calibration` | 0.1761 | 0.1245 | 0.1203 | 0.1403 |
+| `massey_blend` | 0.1752 | 0.1233 | 0.1271 | 0.1419 |
+| `massey_direct` | 0.1752 | 0.1233 | 0.1271 | 0.1419 |
+| `seed_spline_only` | 0.1752 | 0.1233 | 0.1271 | 0.1419 |
+| `baseline_massey` | 0.1766 | 0.1180 | 0.1314 | 0.1420 |
+| `poisson_margin` | 0.1788 | 0.1482 | 0.1493 | 0.1588 |
 
-> **Note:** `modeh7` takes #1 on both leaderboards. Its 2022 M score (0.2364) is weaker than the pack because women's data isn't available for `data/2022/`, halving its training set for that season.
+> **Notes:**
+> - `modeh7` leads both leaderboards. Its 2022 men's score (0.2364) is weaker because women's data isn't available for `data/2022/`, halving its training set for that year.
+> - `upset_aware_ensemble` ranks 9th overall (men's) but is top-4 in both 2024 and 2025, suggesting its upset features are gaining relevance in recent tournaments. Its weaker 2022/2023 scores likely reflect insufficient training data for the new features in earlier seasons.
+
+---
+
+## Upset Analysis
+
+Analysis of men's tournament upsets from 2010–2025 (948 games, 274 upsets). Run with:
+
+```bash
+poetry run python utils/upset_analysis.py --data-dir data/2026
+```
+
+### Upset rates by round
+
+| Round | Games | Upset Rate |
+|-------|-------|------------|
+| Round of 64 | 468 | 28.0% |
+| Round of 32 | 247 | 27.1% |
+| Sweet 16 | 144 | **37.5%** |
+| Elite 8 | 36 | **41.7%** |
+| Final Four | 30 | 13.3% |
+| Championship | 15 | 6.7% |
+
+Models are most penalized in the Sweet 16 and Elite 8 — the rounds with the highest variance. By the Final Four the remaining teams are closely matched at the top, so upsets are rarer.
+
+### Most upset-prone seed matchups
+
+| Matchup | Games | Upset Rate |
+|---------|-------|------------|
+| 6 vs 11 | 60 | **51.7%** — effectively a coin flip |
+| 8 vs 9 | 60 | **48.3%** — nearly even |
+| 3 vs 11 | 28 | 42.9% |
+| 7 vs 10 | 59 | 39.0% |
+| 5 vs 12 | 60 | 38.3% |
+| 4 vs 5 | 31 | 35.5% |
+| 1 vs 2 | 21 | 38.1% — seeds converge at top |
+| 3 vs 14 | 60 | 13.3% |
+| 2 vs 15 | 60 | 11.7% |
+| 1 vs 16 | 60 | **3.3%** — only 2 upsets in 60 games |
+
+All current models underpredict upsets in 6v11 and 8v9 matchups because the seed-spline assigns ~22% to the higher-seeded team in those games, while the empirical rate is ~50%.
+
+### What features predict upsets
+
+From point-biserial correlation analysis (winner stats minus loser stats):
+
+| Feature Diff | Correlation | Interpretation |
+|---|---|---|
+| `MasseyImpliedSeed` | +0.57 | Underseeded teams (Massey says they're better than their seed) win more often |
+| `NetEff` | −0.47 | Lower net efficiency in the winner = upset signal |
+| `DefFirstRatio` | +0.47 | Defense-first teams punch above their seed |
+| `FullSeasonWinPct` | −0.44 | Win% gap: lower seed wins despite worse record |
+| `RecentMomentum` | +0.24 | Late-season form matters |
+| `ThreePtReliance` | +0.06 | Slight signal; high-variance style |
+
+> **Key insight:** The strongest actionable signal is teams whose Massey rankings significantly outperform their official seed. A team seeded 10th but ranked 6th by Massey composite is systematically underseeded and more likely to cause an upset.
+
+### Implications for models
+
+All current methods are anchored 65–75% to the seed-spline, which is calibrated on historical win rates and is inherently chalky. The `upset_aware_ensemble` addresses this by:
+1. Adding `MasseyVsSeedGap`, `DefFirstRatio`, `RecentMomentum`, and `ThreePtReliance` as explicit features
+2. Reducing the spline anchor to 50% for men's (from 70%), giving the ML component room to move predictions toward upset-prone teams
+
+---
 
 ## CLI Tools
 
@@ -73,7 +145,7 @@ poetry run python utils/eval_framework.py
 
 # Specific subset:
 poetry run python utils/eval_framework.py \
-    --methods modeh7 xgb_ensemble seed_matchup_calibration \
+    --methods modeh7 xgb_ensemble upset_aware_ensemble \
     --years 2024 2025 --genders M
 
 # View existing results without regenerating:
@@ -98,26 +170,59 @@ All flags:
 
 Output: `output/eval_results.csv`
 
-### Build a Kaggle submission (recommended workflow)
+### Generate a Kaggle submission
 
-The cleanest path to a submission: evaluate all methods, then blend the best ones into a single Kaggle-ready CSV.
+The recommended workflow: evaluate methods, then generate a blended submission for the target season.
 
 **Step 1 — Evaluate (or refresh) all methods:**
 ```bash
 poetry run python utils/eval_framework.py --years 2023 2024 2025
 ```
 
-**Step 2 — Generate per-method prediction CSVs for the target season:**
+**Step 2 — Generate and blend all methods into one CSV (default):**
 ```bash
+# Average all methods from eval_results (default behavior):
 poetry run python utils/generate_submission.py --season 2026
+
+# Specific methods only:
+poetry run python utils/generate_submission.py \
+    --season 2026 --methods modeh7 xgb_ensemble upset_aware_ensemble
+
+# Top N methods by historical Brier, averaged:
+poetry run python utils/generate_submission.py \
+    --season 2026 --top-n 3 --strategy average_topn \
+    --years-for-ranking 2024 2025
+
+# Use single best method:
+poetry run python utils/generate_submission.py \
+    --season 2026 --top-n 1 --strategy top1
 ```
 
-**Step 3 — Blend the top methods into one Kaggle CSV:**
+All `generate_submission.py` flags:
+```
+--season N                                    Target season year (required)
+--methods METHOD [...]                        Explicit method list (skips eval-results ranking)
+--top-n N                                     Limit to top N from eval_results (default: all)
+--strategy top1|average_topn|average_all|average_top3
+                                              Combination strategy (default: average_all)
+--years-for-ranking Y [...]                   Years for ranking methods (default: all)
+--eval-results PATH                           Path to eval_results.csv
+--data-dir PATH                               Data directory (default: data/{season})
+--output-dir PATH                             Output root (default: output/)
+--mens-method METHOD                          Override method for men's only
+--womens-method METHOD                        Override method for women's only
+--no-skip-existing                            Regenerate even if CSV exists
+--no-brackets                                 Skip bracket PNG generation
+```
+
+Output: `output/{season}/submission_{season}_{strategy}.csv`
+
+**Step 3 (optional) — Blend already-generated CSVs with a different weighting:**
 ```bash
-# Equal blend of top 2 methods per gender (default):
+# Equal blend of top 2 methods per gender:
 poetry run python utils/kaggle_submission.py --season 2026
 
-# Weighted blend (inverse-Brier) of top 3, ranked on recent years:
+# Inverse-Brier weighted blend of top 3, ranked on recent years:
 poetry run python utils/kaggle_submission.py \
     --season 2026 \
     --strategy weighted \
@@ -125,46 +230,25 @@ poetry run python utils/kaggle_submission.py \
     --years-for-ranking 2024 2025
 ```
 
-All `kaggle_submission.py` flags:
-```
---season N                    Target season year (required)
---top-n N                     Methods to blend per gender (default: 2)
---strategy equal|weighted     equal = uniform weights; weighted = inverse-Brier (default: equal)
---years-for-ranking Y [...]   Years used to rank methods (default: 2024 2025)
---eval-results PATH           Path to eval_results.csv (default: output/eval_results.csv)
---output-dir PATH             Output root (default: output/)
-```
-
 Output: `output/{season}/kaggle_submission_{season}.csv`
 
-### Generate a single submission with a specific method
+### Run upset analysis
 
 ```bash
-# Generate using top methods from eval_results.csv:
-poetry run python utils/generate_submission.py --season 2026
+# Full analysis using cumulative 2026 data (covers 2003-2025):
+poetry run python utils/upset_analysis.py --data-dir data/2026
 
-# Custom strategy:
-poetry run python utils/generate_submission.py \
-    --season 2026 \
-    --strategy average_top3 \
-    --years-for-ranking 2024 2025 \
-    --top-n 3
+# Save to custom path:
+poetry run python utils/upset_analysis.py \
+    --data-dir data/2026 --output output/upset_analysis.csv
 ```
 
-All flags:
-```
---season N                   Target season year (required)
---eval-results PATH          Path to eval_results.csv (default: output/eval_results.csv)
---top-n N                    Number of top methods to use (default: 3)
---strategy top1|average_top3 Combination strategy (default: top1)
---years-for-ranking Y [...]  Which years to rank on (default: all in eval_results)
---data-dir PATH              Data directory (default: data/{season})
---output-dir PATH            Output root (default: output/)
---no-skip-existing           Regenerate even if CSV exists
---no-brackets                Skip bracket PNG generation
-```
-
-Output: `output/{season}/submission_{season}_{strategy}.csv`
+Outputs (all in same directory as `--output`):
+- `upset_analysis.csv` — full game-level dataset with all features
+- `upset_by_round.csv` — upset rates per round
+- `upset_by_matchup.csv` — upset rates per seed pair
+- `upset_correlations.csv` — point-biserial correlations
+- `upset_lr_coefficients.csv` — logistic regression coefficients
 
 ### Generate bracket PNGs from existing submissions
 
@@ -190,12 +274,12 @@ All flags:
 --methods METHOD [...]   Only process these methods (default: all found)
 --data-dir PATH          Cumulative data root (default: data/2026)
 --output-dir PATH        Output root (default: output/)
---no-skip-existing       Regenerate even if bracket.png already exists
+--no-skip-existing       Regenerate even if bracket PNG already exists
 ```
 
 Output:
-- `output/{year}/brackets/{method}/{gender}/bracket.png` — predicted bracket
-- `output/{year}/brackets/{method}/{gender}/bracket_historical.png` — predicted vs actual (2022–2025)
+- `output/{year}/{method}/bracket_{gender}.png` — predicted bracket
+- `output/{year}/{method}/bracket_{gender}_historical.png` — predicted vs actual (2022–2025)
 
 ### Generate historical artifacts
 
@@ -220,7 +304,7 @@ All flags:
 --artifact-suffix SUFFIX Optional suffix for output file naming
 ```
 
-Output: `output/{year}/submissions/`, `output/{year}/brackets/`, `output/scoring_results.csv`
+Output: `output/{year}/{method}/`, `output/scoring_results.csv`
 
 ### Other utilities
 
@@ -249,11 +333,20 @@ Update `CURRENT_SEASON` at the top of each notebook each year. For backtesting, 
 ```
 output/
 ├── eval_results.csv          # Method × year × gender Brier scores
-├── scoring_results.csv       # Legacy aggregate scoring table
+├── scoring_results.csv       # Aggregate scoring table
+├── upset_analysis.csv        # Game-level upset dataset (from upset_analysis.py)
+├── upset_by_round.csv        # Upset rates per round
+├── upset_by_matchup.csv      # Upset rates per seed matchup
+├── upset_correlations.csv    # Feature correlations with upset outcome
+├── upset_lr_coefficients.csv # Logistic regression upset predictors
 └── {year}/
-    ├── submissions/          # {method}_{gender}.csv
-    ├── brackets/             # {method}/{gender}/bracket.{png,html}
-    └── features/             # {gender}/feature_dataset.csv
+    ├── {method}/             # Per-method flat folder
+    │   ├── {method}_{gender}.csv        # Submission predictions
+    │   ├── bracket_{gender}.png         # Bracket visualization
+    │   ├── bracket_{gender}_historical.png
+    │   └── bracket_{gender}.html
+    ├── features/             # {gender}/feature_dataset.csv (runtime cache)
+    └── submission_{year}_{strategy}.csv  # Final Kaggle submission
 ```
 
 ## Running Tests

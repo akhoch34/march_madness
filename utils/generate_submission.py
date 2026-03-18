@@ -6,8 +6,9 @@ and produces a combined M+W submission CSV plus bracket PNGs.
 
 Usage (from project root):
     poetry run python utils/generate_submission.py --season 2026
-    poetry run python utils/generate_submission.py --season 2026 --strategy average_top3
-    poetry run python utils/generate_submission.py --season 2026 --top-n 3 --years-for-ranking 2024 2025
+    poetry run python utils/generate_submission.py --season 2026 --strategy average_all
+    poetry run python utils/generate_submission.py --season 2026 --top-n 3 --strategy average_topn
+    poetry run python utils/generate_submission.py --season 2026 --methods xgb_ensemble_v2 modeh7
     poetry run python utils/generate_submission.py --season 2026 --eval-results output/eval_results.csv
 """
 
@@ -32,10 +33,10 @@ from src.approaches import generate_notebook_submission
 def load_top_methods(
     eval_results_path: str,
     gender: str,
-    top_n: int = 3,
+    top_n: int | None = None,
     years: list[int] | None = None,
 ) -> list[str]:
-    """Read eval_results.csv and return top_n method names sorted best→worst for given gender.
+    """Read eval_results.csv and return method names sorted best→worst for given gender.
 
     Parameters
     ----------
@@ -43,8 +44,8 @@ def load_top_methods(
         Path to eval_results.csv (output of utils/eval_framework.py).
     gender : str
         "M" or "W".
-    top_n : int
-        Number of top methods to return.
+    top_n : int or None
+        Number of top methods to return. None means all methods.
     years : list[int], optional
         Filter to these years only. Default: use all available years.
 
@@ -71,11 +72,12 @@ def load_top_methods(
             raise ValueError(f"No results for gender='{gender}', years={years}")
 
     avg_brier = gdf.groupby(method_col)["brier_score"].mean().sort_values()
-    top_methods = avg_brier.head(top_n).index.tolist()
-    print(f"Top {top_n} methods for {gender} (avg Brier over {sorted(gdf['year'].unique().tolist())} seasons):")
-    for i, m in enumerate(top_methods, 1):
+    methods = avg_brier.head(top_n).index.tolist() if top_n is not None else avg_brier.index.tolist()
+    label = f"top {top_n}" if top_n is not None else "all"
+    print(f"Methods for {gender} ({label}, avg Brier over {sorted(gdf['year'].unique().tolist())} seasons):")
+    for i, m in enumerate(methods, 1):
         print(f"  {i}. {m:35s} avg_brier={avg_brier[m]:.5f}")
-    return top_methods
+    return methods
 
 
 def generate_predictions(
@@ -109,7 +111,7 @@ def generate_predictions(
     """
     results = {}
     for method in methods:
-        sub_dir = os.path.join(output_dir, str(season), method, "submissions")
+        sub_dir = os.path.join(output_dir, str(season), method)
         os.makedirs(sub_dir, exist_ok=True)
         sub_path = os.path.join(sub_dir, f"{method}_{gender}.csv")
         if skip_existing and os.path.exists(sub_path):
@@ -137,6 +139,7 @@ def generate_predictions(
 def combine_submissions(
     method_predictions: dict[str, pd.DataFrame],
     strategy: str = "top1",
+    top_n: int | None = None,
 ) -> pd.DataFrame:
     """Combine method predictions into a single submission.
 
@@ -146,8 +149,12 @@ def combine_submissions(
         method → DataFrame with [ID, Pred] columns.
         Methods should be ordered best→worst (first is best).
     strategy : str
-        "top1" — use predictions from the best method only.
-        "average_top3" — mean of up to top-3 method predictions.
+        "top1"       — best method only.
+        "average_topn" — mean of top_n methods (uses top_n param; defaults to 3).
+        "average_top3" — alias for average_topn with top_n=3 (backwards compat).
+        "average_all"  — mean of all provided methods.
+    top_n : int or None
+        Used by "average_topn" to control how many methods to average.
 
     Returns
     -------
@@ -163,20 +170,32 @@ def combine_submissions(
         print(f"  Strategy=top1: using {best_method}")
         return method_predictions[best_method][["ID", "Pred"]].copy()
 
-    elif strategy == "average_top3":
-        top_methods = ordered_methods[:3]
-        print(f"  Strategy=average_top3: averaging {top_methods}")
-        frames = [method_predictions[m][["ID", "Pred"]].rename(columns={"Pred": f"Pred_{m}"}) for m in top_methods]
+    elif strategy in ("average_top3", "average_topn"):
+        n = top_n if (strategy == "average_topn" and top_n is not None) else 3
+        selected = ordered_methods[:n]
+        print(f"  Strategy={strategy}: averaging {selected}")
+        frames = [method_predictions[m][["ID", "Pred"]].rename(columns={"Pred": f"Pred_{m}"}) for m in selected]
         merged = frames[0]
         for frame in frames[1:]:
             merged = merged.merge(frame, on="ID", how="outer")
-        pred_cols = [f"Pred_{m}" for m in top_methods if f"Pred_{m}" in merged.columns]
+        pred_cols = [f"Pred_{m}" for m in selected if f"Pred_{m}" in merged.columns]
+        merged["Pred"] = merged[pred_cols].mean(axis=1)
+        merged["Pred"] = merged["Pred"].clip(0.025, 0.975)
+        return merged[["ID", "Pred"]]
+
+    elif strategy == "average_all":
+        print(f"  Strategy=average_all: averaging {len(ordered_methods)} methods: {ordered_methods}")
+        frames = [method_predictions[m][["ID", "Pred"]].rename(columns={"Pred": f"Pred_{m}"}) for m in ordered_methods]
+        merged = frames[0]
+        for frame in frames[1:]:
+            merged = merged.merge(frame, on="ID", how="outer")
+        pred_cols = [f"Pred_{m}" for m in ordered_methods if f"Pred_{m}" in merged.columns]
         merged["Pred"] = merged[pred_cols].mean(axis=1)
         merged["Pred"] = merged["Pred"].clip(0.025, 0.975)
         return merged[["ID", "Pred"]]
 
     else:
-        raise ValueError(f"Unknown strategy '{strategy}'. Choose 'top1' or 'average_top3'.")
+        raise ValueError(f"Unknown strategy '{strategy}'. Choose 'top1', 'average_topn', 'average_all', or 'average_top3'.")
 
 
 def expand_to_sample_submission(
@@ -247,12 +266,21 @@ def main():
         help="Path to eval_results.csv (output of utils/eval_framework.py).",
     )
     parser.add_argument(
-        "--top-n", type=int, default=3,
-        help="Number of top methods to consider per gender.",
+        "--methods", nargs="+", default=None,
+        help=(
+            "Explicit list of methods to generate (skips eval-results ranking). "
+            "E.g. --methods xgb_ensemble_v2 modeh7 upset_aware_ensemble"
+        ),
     )
     parser.add_argument(
-        "--strategy", choices=["top1", "average_top3"], default="top1",
-        help="Combination strategy.",
+        "--top-n", type=int, default=None,
+        help="Limit to top N methods from eval_results. Default: all methods.",
+    )
+    parser.add_argument(
+        "--strategy",
+        choices=["top1", "average_top3", "average_topn", "average_all"],
+        default="average_all",
+        help="Combination strategy. Default: average_all.",
     )
     parser.add_argument(
         "--years-for-ranking", nargs="+", type=int, default=None,
@@ -318,6 +346,9 @@ def main():
         if gender in manual_methods:
             top_methods = [manual_methods[gender]]
             print(f"  Using specified method: {top_methods[0]}")
+        elif args.methods:
+            top_methods = args.methods
+            print(f"  Using specified methods: {top_methods}")
         else:
             try:
                 top_methods = load_top_methods(
@@ -352,7 +383,7 @@ def main():
 
         # Combine
         print(f"\nCombining {gender} predictions (strategy={args.strategy})...")
-        combined = combine_submissions(preds, strategy=args.strategy)
+        combined = combine_submissions(preds, strategy=args.strategy, top_n=args.top_n)
         all_submissions.append(combined)
         print(f"  {len(combined)} matchup rows for {gender}")
 
@@ -376,6 +407,10 @@ def main():
         m_label = chosen.get("M", "auto")
         w_label = chosen.get("W", "auto")
         file_tag = f"M_{m_label}__W_{w_label}"
+    elif args.methods:
+        file_tag = f"custom_{len(args.methods)}methods_{args.strategy}"
+    elif args.top_n is not None:
+        file_tag = f"top{args.top_n}_{args.strategy}"
     else:
         file_tag = args.strategy
     out_path = os.path.join(args.output_dir, str(season), f"submission_{season}_{file_tag}.csv")
