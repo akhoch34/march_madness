@@ -27,7 +27,7 @@ Twelve methods are implemented in `src/approaches/notebook_models.py`. Two addit
 | `poisson_margin` | Computes expected scoring margin `(OffEff_t1 − DefEff_t2) − (OffEff_t2 − DefEff_t1)`, fits logistic regression on historical (margin, result) pairs. Only method derived purely from on-court efficiency. | Offensive/defensive efficiency (pts per game), expected point margin | 35% margin LR + 65% spline |
 | `seed_matchup_calibration` | Empirical win-rate lookup keyed by `(seed_lo, seed_hi)` pair (e.g., 5v12 ≈ 35%). Blends calibrated rate with `xgb_ensemble_v2`. Falls back to spline if <10 historical games for that pair. | Historical win rate per seed-pair + `xgb_ensemble_v2` predictions | 35% historical rate + 65% xgb_v2 |
 | `meta_ensemble` | Stacked meta-learner: OOF loop trains `xgb_ensemble_v2` and `massey_direct` on prior seasons, fits LogisticRegression on OOF preds. Slow (~5+ min). Women's fallback: `xgb_ensemble_v2` only. | `xgb_ensemble_v2` and `massey_direct` out-of-fold predictions as meta-features | 50% meta-LR + 50% spline |
-| `upset_aware_ensemble` | Extends `xgb_ensemble_v2` with four upset-specific features derived from upset pattern analysis. Reduces spline dominance for men's to let upset signals matter. | All `xgb_ensemble_v2` features + ThreePtReliance, DefFirstRatio, RecentMomentum, MasseyVsSeedGap diffs | **50% ensemble + 50% spline** (M); 30/70 (W) |
+| `upset_aware_ensemble` | Extends `xgb_ensemble_v2` with four upset-specific features derived from upset pattern analysis. Reduces spline dominance for men's to let upset signals matter. | All `xgb_ensemble_v2` features + HistMatchupRate_Diff, DefFirstRatio, RecentMomentum, MasseyVsSeedGap diffs | **70% ensemble + 30% spline** (M); 30/70 (W) |
 
 **ELO-backed methods** (via `Predictor` class, included in `generate_historical_artifacts.py` but not `eval_framework.py` defaults):
 - `elo` — pure ELO rating prediction
@@ -47,9 +47,9 @@ Results from `output/eval_results.csv` (Brier score, lower is better). Refresh w
 | `recency_xgb` | 0.2173 | 0.2186 | 0.1840 | 0.1566 | 0.1941 |
 | `xgb_ensemble_v2` | 0.2173 | 0.2152 | 0.1886 | 0.1561 | 0.1943 |
 | `baseline_massey` | 0.2145 | 0.2175 | 0.1833 | 0.1652 | 0.1951 |
+| `upset_aware_ensemble` | 0.2234 | 0.2238 | 0.1866 | 0.1495 | 0.1958 |
 | `massey_direct` | 0.2142 | 0.2114 | 0.1939 | 0.1645 | 0.1960 |
 | `seed_spline_only` | 0.2142 | 0.2112 | 0.1940 | 0.1648 | 0.1961 |
-| `upset_aware_ensemble` | 0.2258 | 0.2228 | 0.1884 | 0.1527 | 0.1974 |
 | `massey_blend` | 0.2142 | 0.2147 | 0.2008 | 0.1811 | 0.2027 |
 | `poisson_margin` | 0.2145 | 0.2148 | 0.2027 | 0.1836 | 0.2039 |
 
@@ -60,6 +60,7 @@ Results from `output/eval_results.csv` (Brier score, lower is better). Refresh w
 | `modeh7` | 0.1654 | 0.1252 | **0.1075** | **0.1327** |
 | `recency_xgb` | 0.1728 | 0.1186 | 0.1222 | 0.1379 |
 | `xgb_ensemble` | 0.1725 | 0.1233 | 0.1185 | 0.1381 |
+| `upset_aware_ensemble` | 0.1766 | 0.1228 | 0.1172 | 0.1389 |
 | `xgb_ensemble_v2` | 0.1729 | 0.1229 | 0.1217 | 0.1391 |
 | `seed_matchup_calibration` | 0.1761 | 0.1245 | 0.1203 | 0.1403 |
 | `massey_blend` | 0.1752 | 0.1233 | 0.1271 | 0.1419 |
@@ -70,7 +71,7 @@ Results from `output/eval_results.csv` (Brier score, lower is better). Refresh w
 
 > **Notes:**
 > - `modeh7` leads both leaderboards. Its 2022 men's score (0.2364) is weaker because women's data isn't available for `data/2022/`, halving its training set for that year.
-> - `upset_aware_ensemble` ranks 9th overall (men's) but is top-4 in both 2024 and 2025, suggesting its upset features are gaining relevance in recent tournaments. Its weaker 2022/2023 scores likely reflect insufficient training data for the new features in earlier seasons.
+> - `upset_aware_ensemble` ranks 7th overall (men's) and 3rd overall (women's) after the rewrite: `ThreePtReliance` (r=0.06) was replaced by `HistMatchupRate_Diff` and the men's blend was raised to 70% ML / 30% spline. It is top-4 in both 2024 and 2025 (men's), suggesting its upset features are gaining relevance in recent tournaments.
 
 ---
 
@@ -123,15 +124,15 @@ From point-biserial correlation analysis (winner stats minus loser stats):
 | `DefFirstRatio` | +0.47 | Defense-first teams punch above their seed |
 | `FullSeasonWinPct` | −0.44 | Win% gap: lower seed wins despite worse record |
 | `RecentMomentum` | +0.24 | Late-season form matters |
-| `ThreePtReliance` | +0.06 | Slight signal; high-variance style |
+| `ThreePtReliance` | +0.06 | Slight signal; high-variance style (removed from model — too noisy) |
 
 > **Key insight:** The strongest actionable signal is teams whose Massey rankings significantly outperform their official seed. A team seeded 10th but ranked 6th by Massey composite is systematically underseeded and more likely to cause an upset.
 
 ### Implications for models
 
 All current methods are anchored 65–75% to the seed-spline, which is calibrated on historical win rates and is inherently chalky. The `upset_aware_ensemble` addresses this by:
-1. Adding `MasseyVsSeedGap`, `DefFirstRatio`, `RecentMomentum`, and `ThreePtReliance` as explicit features
-2. Reducing the spline anchor to 50% for men's (from 70%), giving the ML component room to move predictions toward upset-prone teams
+1. Adding `MasseyVsSeedGap`, `DefFirstRatio`, `RecentMomentum`, and `HistMatchupRate_Diff` as explicit features
+2. Reducing the spline anchor to 30% for men's (from 70%), giving the ML component room to move predictions toward upset-prone teams
 
 ---
 

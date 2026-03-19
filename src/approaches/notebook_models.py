@@ -1976,12 +1976,11 @@ def _compute_upset_features(
     """Compute upset-predictive features per (Season, TeamID).
 
     Returns DataFrame with columns:
-      - ThreePtReliance: FGA3 / FGA (high = high-variance team)
       - RecentMomentum: last_10_win_pct - full_season_win_pct
       - MasseyVsSeedGap: ActualSeed - MasseyImpliedSeed (positive = underseeded)
       - DefFirstRatio: DefEff / OffEff (higher = more defense-reliant, more consistent)
 
-    Graceful fallback: missing detailed data → ThreePtReliance/DefFirstRatio = 0.
+    Graceful fallback: missing detailed data → DefFirstRatio = 0.
     Massey unavailable → MasseyVsSeedGap = 0.
     """
     records: dict[tuple, dict] = {}
@@ -1994,22 +1993,17 @@ def _compute_upset_features(
             l_poss = float(row["LFGA"]) - float(row["LOR"]) + float(row["LTO"]) + 0.44 * float(row["LFTA"])
             poss = (w_poss + l_poss) / 2.0
 
-            for team_id, fga, fga3, pts, opp_pts in [
-                (int(row["WTeamID"]), float(row["WFGA"]), float(row["WFGA3"]),
-                 float(row["WScore"]), float(row["LScore"])),
-                (int(row["LTeamID"]), float(row["LFGA"]), float(row["LFGA3"]),
-                 float(row["LScore"]), float(row["WScore"])),
+            for team_id, pts, opp_pts in [
+                (int(row["WTeamID"]), float(row["WScore"]), float(row["LScore"])),
+                (int(row["LTeamID"]), float(row["LScore"]), float(row["WScore"])),
             ]:
                 key = (season, team_id)
                 if key not in records:
                     records[key] = {
                         "Season": season, "TeamID": team_id,
-                        "FGA": 0.0, "FGA3": 0.0,
                         "Pts": 0.0, "OppPts": 0.0, "Poss": 0.0, "Games": 0,
                     }
                 r = records[key]
-                r["FGA"] += fga
-                r["FGA3"] += fga3
                 r["Pts"] += pts
                 r["OppPts"] += opp_pts
                 r["Poss"] += poss
@@ -2052,11 +2046,6 @@ def _compute_upset_features(
         season, team_id = key
         r = records.get(key, {})
 
-        # ThreePtReliance
-        fga = r.get("FGA", 0.0)
-        fga3 = r.get("FGA3", 0.0)
-        three_pt_reliance = fga3 / fga if fga > 0 else 0.0
-
         # DefFirstRatio
         poss = r.get("Poss", 0.0)
         games = r.get("Games", 0)
@@ -2084,7 +2073,6 @@ def _compute_upset_features(
         rows.append({
             "Season": season,
             "TeamID": team_id,
-            "ThreePtReliance": three_pt_reliance,
             "DefFirstRatio": def_first_ratio,
             "RecentMomentum": momentum,
             "MasseyVsSeedGap": massey_gap,
@@ -2094,11 +2082,13 @@ def _compute_upset_features(
 
 
 def _generate_upset_aware_ensemble_submission(data_dir: str, season: int, gender: str) -> pd.DataFrame:
-    """xgb_ensemble_v2 + 4 upset-specific features + reduced spline anchor.
+    """xgb_ensemble_v2 + upset-specific features + aggressive ensemble weighting.
 
     Key changes vs xgb_ensemble_v2:
-      - Adds ThreePtReliance, DefFirstRatio, RecentMomentum, MasseyVsSeedGap diffs
-      - Men's blend: 50% ML + 50% spline (down from 30/70) — lets upset features matter
+      - Adds DefFirstRatio, RecentMomentum, MasseyVsSeedGap diffs (per-team features)
+      - Adds HistMatchupRate_Diff (matchup-level historical seed-pair upset rate)
+      - ThreePtReliance removed (r=0.06 with upsets — essentially noise)
+      - Men's blend: 70% ML + 30% spline — strongly favors upset-aware ensemble
       - Women's blend: 30% ML + 70% spline (unchanged — fewer features available)
     """
     print(f"Preparing upset_aware_ensemble submission for {gender} {season}...")
@@ -2134,6 +2124,28 @@ def _generate_upset_aware_ensemble_submission(data_dir: str, season: int, gender
     train_tourney = tourney[(tourney["Season"] >= 2010) & (tourney["Season"] < season)]
     print(f"Building upset_aware training features from {len(train_tourney)} tournament games...")
 
+    # Build historical seed-pair upset rates for HistMatchupRate feature
+    seed_pair_games: dict[tuple, int] = {}
+    seed_pair_upsets: dict[tuple, int] = {}
+    for _, g in train_tourney.iterrows():
+        s = int(g["Season"])
+        w, l = int(g["WTeamID"]), int(g["LTeamID"])
+        ws_rows = seeds[(seeds["Season"] == s) & (seeds["TeamID"] == w)]
+        ls_rows = seeds[(seeds["Season"] == s) & (seeds["TeamID"] == l)]
+        if ws_rows.empty or ls_rows.empty:
+            continue
+        wseed = _seed_number(ws_rows.iloc[0]["Seed"])
+        lseed = _seed_number(ls_rows.iloc[0]["Seed"])
+        lo, hi = min(wseed, lseed), max(wseed, lseed)
+        pair = (lo, hi)
+        seed_pair_games[pair] = seed_pair_games.get(pair, 0) + 1
+        if wseed > lseed:  # higher seed number won = upset
+            seed_pair_upsets[pair] = seed_pair_upsets.get(pair, 0) + 1
+    seed_pair_upset_rate: dict[tuple, float] = {
+        pair: seed_pair_upsets.get(pair, 0) / cnt
+        for pair, cnt in seed_pair_games.items() if cnt >= 3
+    }
+
     # Build matchup rows (reuse v2 builder with all_feats already merged)
     feat_cols = [col for col in all_feats_raw.columns if col not in ["Season", "TeamID"]]
     rows = []
@@ -2156,12 +2168,22 @@ def _generate_upset_aware_ensemble_submission(data_dir: str, season: int, gender
 
         feat1 = feat1.iloc[0]
         feat2 = feat2.iloc[0]
+        s1_num = _seed_number(seed1_rows.iloc[0]["Seed"])
+        s2_num = _seed_number(seed2_rows.iloc[0]["Seed"])
+        lo, hi = min(s1_num, s2_num), max(s1_num, s2_num)
+        pair = (lo, hi)
+        upset_rate = seed_pair_upset_rate.get(pair, 0.5)
+        if s1_num > s2_num:
+            hist_diff = upset_rate - (1.0 - upset_rate)
+        else:
+            hist_diff = (1.0 - upset_rate) - upset_rate
         row = {
             "Season": s,
             "Team1ID": team1,
             "Team2ID": team2,
             "Result": actual,
-            "SeedDiff": _seed_number(seed1_rows.iloc[0]["Seed"]) - _seed_number(seed2_rows.iloc[0]["Seed"]),
+            "SeedDiff": s1_num - s2_num,
+            "HistMatchupRate_Diff": hist_diff,
         }
         for col in feat_cols:
             v1 = feat1.get(col, 0)
@@ -2189,8 +2211,8 @@ def _generate_upset_aware_ensemble_submission(data_dir: str, season: int, gender
         s=len(feat_df),
         ext=3,
     )
-    # Reduced spline anchor for men — lets upset features have more influence
-    blend_weight = 0.3 if gender == "W" else 0.5
+    # Increased ensemble weight for men — lets upset features dominate over chalk spline
+    blend_weight = 0.3 if gender == "W" else 0.70
 
     predictions = []
     current_feats = all_feats_raw[all_feats_raw["Season"] == season].set_index("TeamID")
@@ -2202,8 +2224,18 @@ def _generate_upset_aware_ensemble_submission(data_dir: str, season: int, gender
         seed2_rows = seeds[(seeds["Season"] == season) & (seeds["TeamID"] == team2)]
         if len(seed1_rows) == 0 or len(seed2_rows) == 0:
             continue
+        s1_num = _seed_number(seed1_rows.iloc[0]["Seed"])
+        s2_num = _seed_number(seed2_rows.iloc[0]["Seed"])
+        lo, hi = min(s1_num, s2_num), max(s1_num, s2_num)
+        pair = (lo, hi)
+        upset_rate = seed_pair_upset_rate.get(pair, 0.5)
+        if s1_num > s2_num:
+            hist_diff = upset_rate - (1.0 - upset_rate)
+        else:
+            hist_diff = (1.0 - upset_rate) - upset_rate
         row = {
-            "SeedDiff": _seed_number(seed1_rows.iloc[0]["Seed"]) - _seed_number(seed2_rows.iloc[0]["Seed"])
+            "SeedDiff": s1_num - s2_num,
+            "HistMatchupRate_Diff": hist_diff,
         }
         feat1 = current_feats.loc[team1] if team1 in current_feats.index else pd.Series(dtype=float)
         feat2 = current_feats.loc[team2] if team2 in current_feats.index else pd.Series(dtype=float)
