@@ -46,15 +46,16 @@ _MANUAL_OVERRIDES = {
     "Queens (NC)": "Queens NC",
     "West Georgia": "West Georgia",
     "Mercyhurst": "Mercyhurst",
+    "Northern Iowa": "Northern Iowa",
 }
 
 ESPN_API_M = (
     "https://site.api.espn.com/apis/site/v2/sports/basketball/"
-    "mens-college-basketball/teams?limit=500"
+    "mens-college-basketball/teams?limit=700"
 )
 ESPN_API_W = (
     "https://site.api.espn.com/apis/site/v2/sports/basketball/"
-    "womens-college-basketball/teams?limit=500"
+    "womens-college-basketball/teams?limit=700"
 )
 
 KAGGLE_DATA_DIR = "data/2026"
