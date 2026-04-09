@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>March Madness ML Predictions</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0d1117;
+      color: #c9d1d9;
+      line-height: 1.6;
+    }
+
+    a { color: #58a6ff; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    header {
+      background: linear-gradient(135deg, #1a2a4a 0%, #0d2137 50%, #1a1a2e 100%);
+      padding: 60px 24px 48px;
+      text-align: center;
+      border-bottom: 1px solid #21262d;
+    }
+
+    header .badge {
+      display: inline-block;
+      background: #c8362a;
+      color: #fff;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 4px 12px;
+      border-radius: 20px;
+      margin-bottom: 16px;
+    }
+
+    header h1 {
+      font-size: clamp(2rem, 5vw, 3.2rem);
+      font-weight: 800;
+      color: #f0f6ff;
+      margin-bottom: 12px;
+    }
+
+    header p {
+      font-size: 1.1rem;
+      color: #8b949e;
+      max-width: 560px;
+      margin: 0 auto 28px;
+    }
+
+    header .cta {
+      display: inline-block;
+      background: #c8362a;
+      color: #fff;
+      padding: 10px 28px;
+      border-radius: 6px;
+      font-weight: 600;
+      font-size: 0.95rem;
+      transition: background 0.15s;
+    }
+    header .cta:hover { background: #a52b21; text-decoration: none; }
+
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 48px 24px;
+    }
+
+    h2 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #f0f6ff;
+      margin-bottom: 20px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid #21262d;
+    }
+
+    section { margin-bottom: 56px; }
+
+    /* Stat cards */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 16px;
+      margin-bottom: 48px;
+    }
+    .stat-card {
+      background: #161b22;
+      border: 1px solid #21262d;
+      border-radius: 8px;
+      padding: 20px;
+      text-align: center;
+    }
+    .stat-card .number {
+      font-size: 2rem;
+      font-weight: 800;
+      color: #58a6ff;
+    }
+    .stat-card .label {
+      font-size: 0.82rem;
+      color: #8b949e;
+      margin-top: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    /* Tables */
+    .table-wrap { overflow-x: auto; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.88rem;
+    }
+    thead th {
+      background: #161b22;
+      color: #8b949e;
+      font-weight: 600;
+      text-align: left;
+      padding: 10px 14px;
+      border-bottom: 1px solid #21262d;
+      white-space: nowrap;
+    }
+    tbody tr { border-bottom: 1px solid #21262d; }
+    tbody tr:hover { background: #161b22; }
+    tbody td { padding: 9px 14px; }
+    .mono { font-family: "SFMono-Regular", Consolas, monospace; font-size: 0.82rem; }
+    .best { color: #3fb950; font-weight: 700; }
+    .rank-1 td:first-child { color: #f0f6ff; font-weight: 700; }
+
+    /* Method grid */
+    .method-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 16px;
+    }
+    .method-card {
+      background: #161b22;
+      border: 1px solid #21262d;
+      border-radius: 8px;
+      padding: 18px;
+    }
+    .method-card h3 {
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size: 0.88rem;
+      color: #58a6ff;
+      margin-bottom: 6px;
+    }
+    .method-card p {
+      font-size: 0.83rem;
+      color: #8b949e;
+    }
+
+    /* Upset table highlight rows */
+    .upset-high { color: #f85149; font-weight: 600; }
+    .upset-low  { color: #3fb950; }
+
+    footer {
+      text-align: center;
+      padding: 32px 24px;
+      border-top: 1px solid #21262d;
+      color: #484f58;
+      font-size: 0.82rem;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="badge">Kaggle Competition</div>
+  <h1>March Madness ML Predictions</h1>
+  <p>NCAA tournament win-probability predictions using ELO ratings, XGBoost ensembles, and upset-aware features. Scored by Brier loss.</p>
+  <a class="cta" href="https://github.com/akhoch34/march_madness">View on GitHub</a>
+</header>
+
+<div class="container">
+
+  <div class="stats">
+    <div class="stat-card">
+      <div class="number">12</div>
+      <div class="label">Prediction Methods</div>
+    </div>
+    <div class="stat-card">
+      <div class="number">0.1918</div>
+      <div class="label">Best Avg Brier (M)</div>
+    </div>
+    <div class="stat-card">
+      <div class="number">0.1327</div>
+      <div class="label">Best Avg Brier (W)</div>
+    </div>
+    <div class="stat-card">
+      <div class="number">0.25</div>
+      <div class="label">Random Baseline</div>
+    </div>
+  </div>
+
+  <!-- Men's Leaderboard -->
+  <section>
+    <h2>Men's Leaderboard (2022–2025)</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Method</th>
+            <th>2022</th>
+            <th>2023</th>
+            <th>2024</th>
+            <th>2025</th>
+            <th>Avg</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="rank-1">
+            <td class="mono">modeh7</td>
+            <td>0.2364</td>
+            <td>0.2032</td>
+            <td>0.1878</td>
+            <td class="best">0.1397</td>
+            <td class="best">0.1918</td>
+          </tr>
+          <tr>
+            <td class="mono">xgb_ensemble</td>
+            <td>0.2173</td>
+            <td>0.2116</td>
+            <td>0.1878</td>
+            <td>0.1566</td>
+            <td>0.1933</td>
+          </tr>
+          <tr>
+            <td class="mono">seed_matchup_calibration</td>
+            <td>0.2124</td>
+            <td>0.2157</td>
+            <td>0.1902</td>
+            <td>0.1569</td>
+            <td>0.1938</td>
+          </tr>
+          <tr>
+            <td class="mono">recency_xgb</td>
+            <td>0.2173</td>
+            <td>0.2186</td>
+            <td>0.1840</td>
+            <td>0.1566</td>
+            <td>0.1941</td>
+          </tr>
+          <tr>
+            <td class="mono">xgb_ensemble_v2</td>
+            <td>0.2173</td>
+            <td>0.2152</td>
+            <td>0.1886</td>
+            <td>0.1561</td>
+            <td>0.1943</td>
+          </tr>
+          <tr>
+            <td class="mono">baseline_massey</td>
+            <td>0.2145</td>
+            <td>0.2175</td>
+            <td>0.1833</td>
+            <td>0.1652</td>
+            <td>0.1951</td>
+          </tr>
+          <tr>
+            <td class="mono">upset_aware_ensemble</td>
+            <td>0.2234</td>
+            <td>0.2238</td>
+            <td>0.1866</td>
+            <td>0.1495</td>
+            <td>0.1958</td>
+          </tr>
+          <tr>
+            <td class="mono">massey_direct</td>
+            <td>0.2142</td>
+            <td>0.2114</td>
+            <td>0.1939</td>
+            <td>0.1645</td>
+            <td>0.1960</td>
+          </tr>
+          <tr>
+            <td class="mono">seed_spline_only</td>
+            <td>0.2142</td>
+            <td>0.2112</td>
+            <td>0.1940</td>
+            <td>0.1648</td>
+            <td>0.1961</td>
+          </tr>
+          <tr>
+            <td class="mono">massey_blend</td>
+            <td>0.2142</td>
+            <td>0.2147</td>
+            <td>0.2008</td>
+            <td>0.1811</td>
+            <td>0.2027</td>
+          </tr>
+          <tr>
+            <td class="mono">poisson_margin</td>
+            <td>0.2145</td>
+            <td>0.2148</td>
+            <td>0.2027</td>
+            <td>0.1836</td>
+            <td>0.2039</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- Women's Leaderboard -->
+  <section>
+    <h2>Women's Leaderboard (2023–2025)</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Method</th>
+            <th>2023</th>
+            <th>2024</th>
+            <th>2025</th>
+            <th>Avg</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="rank-1">
+            <td class="mono">modeh7</td>
+            <td>0.1654</td>
+            <td>0.1252</td>
+            <td class="best">0.1075</td>
+            <td class="best">0.1327</td>
+          </tr>
+          <tr>
+            <td class="mono">recency_xgb</td>
+            <td>0.1728</td>
+            <td>0.1186</td>
+            <td>0.1222</td>
+            <td>0.1379</td>
+          </tr>
+          <tr>
+            <td class="mono">xgb_ensemble</td>
+            <td>0.1725</td>
+            <td>0.1233</td>
+            <td>0.1185</td>
+            <td>0.1381</td>
+          </tr>
+          <tr>
+            <td class="mono">upset_aware_ensemble</td>
+            <td>0.1766</td>
+            <td>0.1228</td>
+            <td>0.1172</td>
+            <td>0.1389</td>
+          </tr>
+          <tr>
+            <td class="mono">xgb_ensemble_v2</td>
+            <td>0.1729</td>
+            <td>0.1229</td>
+            <td>0.1217</td>
+            <td>0.1391</td>
+          </tr>
+          <tr>
+            <td class="mono">seed_matchup_calibration</td>
+            <td>0.1761</td>
+            <td>0.1245</td>
+            <td>0.1203</td>
+            <td>0.1403</td>
+          </tr>
+          <tr>
+            <td class="mono">baseline_massey</td>
+            <td>0.1766</td>
+            <td>0.1180</td>
+            <td>0.1314</td>
+            <td>0.1420</td>
+          </tr>
+          <tr>
+            <td class="mono">poisson_margin</td>
+            <td>0.1788</td>
+            <td>0.1482</td>
+            <td>0.1493</td>
+            <td>0.1588</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:0.82rem; color:#8b949e; margin-top:10px;">Brier score — lower is better. Random baseline = 0.25.</p>
+  </section>
+
+  <!-- Methods -->
+  <section>
+    <h2>Prediction Methods</h2>
+    <div class="method-grid">
+      <div class="method-card">
+        <h3>modeh7</h3>
+        <p>2025 Kaggle 1st-place solution. LOSO XGBoost on point differential with spline calibration. Trains on combined M+W data.</p>
+      </div>
+      <div class="method-card">
+        <h3>upset_aware_ensemble</h3>
+        <p>xgb_ensemble_v2 extended with upset-specific features: HistMatchupRate_Diff, DefFirstRatio, RecentMomentum, MasseyVsSeedGap. 70% ML / 30% spline for men's.</p>
+      </div>
+      <div class="method-card">
+        <h3>xgb_ensemble_v2</h3>
+        <p>5-model ensemble (HistGBM, RF, LR, SVC, XGBoost) with conference tourney signals and per-system Massey columns.</p>
+      </div>
+      <div class="method-card">
+        <h3>seed_matchup_calibration</h3>
+        <p>Empirical win-rate lookup by (seed_lo, seed_hi) pair blended with xgb_ensemble_v2. Falls back to spline for rare matchups.</p>
+      </div>
+      <div class="method-card">
+        <h3>recency_xgb</h3>
+        <p>Baseline Massey features with training rows weighted by 0.75^(season_gap) — recent seasons count more.</p>
+      </div>
+      <div class="method-card">
+        <h3>poisson_margin</h3>
+        <p>Expected margin from offensive/defensive efficiency, fit with logistic regression on historical (margin, result) pairs.</p>
+      </div>
+      <div class="method-card">
+        <h3>massey_direct</h3>
+        <p>Logistic regression on per-system Massey rank differences (POM, SAG, DOK, MOR, MAS, RPI).</p>
+      </div>
+      <div class="method-card">
+        <h3>seed_spline_only</h3>
+        <p>UnivariateSpline fitted purely on seed difference. Zero ML — useful as a sanity-check baseline.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Upset Analysis -->
+  <section>
+    <h2>Upset Analysis (Men's 2010–2025)</h2>
+    <p style="color:#8b949e; margin-bottom:20px; font-size:0.9rem;">948 games · 274 upsets. Sweet 16 and Elite 8 show the highest variance.</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Seed Matchup</th>
+            <th>Games</th>
+            <th>Upset Rate</th>
+            <th>Note</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>6 vs 11</td>
+            <td>60</td>
+            <td class="upset-high">51.7%</td>
+            <td>Effectively a coin flip</td>
+          </tr>
+          <tr>
+            <td>8 vs 9</td>
+            <td>60</td>
+            <td class="upset-high">48.3%</td>
+            <td>Nearly even</td>
+          </tr>
+          <tr>
+            <td>3 vs 11</td>
+            <td>28</td>
+            <td class="upset-high">42.9%</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td>7 vs 10</td>
+            <td>59</td>
+            <td>39.0%</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td>5 vs 12</td>
+            <td>60</td>
+            <td>38.3%</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td>1 vs 2</td>
+            <td>21</td>
+            <td>38.1%</td>
+            <td>Seeds converge at top</td>
+          </tr>
+          <tr>
+            <td>3 vs 14</td>
+            <td>60</td>
+            <td>13.3%</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td>2 vs 15</td>
+            <td>60</td>
+            <td>11.7%</td>
+            <td></td>
+          </tr>
+          <tr>
+            <td>1 vs 16</td>
+            <td>60</td>
+            <td class="upset-low">3.3%</td>
+            <td>Only 2 upsets in 60 games</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size: 0.83rem; color: #8b949e; margin-top: 14px;">
+      Key insight: The strongest actionable signal is teams whose Massey rankings significantly outperform their official seed.
+      A team seeded 10th but ranked 6th by Massey composite is systematically underseeded and more likely to cause an upset.
+    </p>
+  </section>
+
+</div>
+
+<footer>
+  Built for the <a href="https://www.kaggle.com/competitions/march-machine-learning-mania-2026">Kaggle March Machine Learning Mania</a> competition &mdash;
+  <a href="https://github.com/akhoch34/march_madness">akhoch34/march_madness</a>
+</footer>
+
+</body>
+</html>
